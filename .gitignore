@@ -9,3 +9,4 @@
 .cxx
 *.hprof
 *.keystore
+app/keystore.properties
