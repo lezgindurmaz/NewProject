@@ -7,6 +7,7 @@ import com.google.android.play.core.integrity.IntegrityTokenRequest;
 import com.google.android.play.core.integrity.IntegrityTokenResponse;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,7 @@ public class RootDetectorUtil {
         results.add(checkSELinuxStatus());
         results.add(checkBootloaderStatus());
         results.add(checkAVBStatus());
+        results.add(checkVerityMode());
         results.add(checkForSuBinary());
         return results;
     }
@@ -49,7 +51,7 @@ public class RootDetectorUtil {
     }
     private static String parseVerdictFromToken(String token) {
         try {
-            String[] parts = token.split("\.");
+            String[] parts = token.split("\\.");
             if (parts.length < 2) return "Invalid Token Structure";
             byte[] decodedBytes = Base64.getDecoder().decode(parts[1]);
             String payload = new String(decodedBytes, "UTF-8");
@@ -84,17 +86,29 @@ public class RootDetectorUtil {
     private static CheckResult checkBootloaderStatus() {
         String state = System.getProperty("ro.boot.vbmeta.device_state");
         if ("locked".equalsIgnoreCase(state)) {
-            return new CheckResult("Bootloader State", true, "Bootloader is locked.");
+            return new CheckResult("Bootloader State (vbmeta)", true, "Bootloader is locked.");
         } else {
-            return new CheckResult("Bootloader State", false, "Bootloader is unlocked (State: " + state + ").");
+            return new CheckResult("Bootloader State (vbmeta)", false, "Bootloader is unlocked (State: " + state + ").");
         }
     }
     private static CheckResult checkAVBStatus() {
-        String state = System.getProperty("ro.boot.verifiedbootstate");
-        if ("green".equalsIgnoreCase(state)) {
-            return new CheckResult("Android Verified Boot", true, "AVB status is GREEN.");
-        } else {
-            return new CheckResult("Android Verified Boot", false, "AVB status is not GREEN (State: " + state + ").");
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/cmdline"))) {
+            String cmdline = reader.readLine();
+            if (cmdline != null) {
+                for (String part : cmdline.split(" ")) {
+                    if (part.startsWith("androidboot.verifiedbootstate=")) {
+                        String state = part.substring("androidboot.verifiedbootstate=".length());
+                        if ("green".equalsIgnoreCase(state)) {
+                            return new CheckResult("Android Verified Boot", true, "AVB status is GREEN.");
+                        } else {
+                            return new CheckResult("Android Verified Boot", false, "AVB status is not GREEN (State: " + state + ").");
+                        }
+                    }
+                }
+            }
+            return new CheckResult("Android Verified Boot", false, "Could not find androidboot.verifiedbootstate in /proc/cmdline.");
+        } catch (Exception e) {
+            return new CheckResult("Android Verified Boot", false, "Could not read /proc/cmdline: " + e.getMessage());
         }
     }
     private static CheckResult checkForSuBinary() {
@@ -105,5 +119,25 @@ public class RootDetectorUtil {
             }
         }
         return new CheckResult("su Binary Check", true, "No 'su' binary found.");
+    }
+    private static CheckResult checkVerityMode() {
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/cmdline"))) {
+            String cmdline = reader.readLine();
+            if (cmdline != null) {
+                for (String part : cmdline.split(" ")) {
+                    if (part.startsWith("androidboot.veritymode=")) {
+                        String mode = part.substring("androidboot.veritymode=".length());
+                        if ("enforcing".equalsIgnoreCase(mode)) {
+                            return new CheckResult("dm-verity Status", true, "dm-verity is in enforcing mode.");
+                        } else {
+                            return new CheckResult("dm-verity Status", false, "dm-verity is not in enforcing mode (Mode: " + mode + ").");
+                        }
+                    }
+                }
+            }
+            return new CheckResult("dm-verity Status", false, "Could not find androidboot.veritymode in /proc/cmdline.");
+        } catch (Exception e) {
+            return new CheckResult("dm-verity Status", false, "Could not read /proc/cmdline: " + e.getMessage());
+        }
     }
 }
