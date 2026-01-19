@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,17 +36,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class DialogType { FOLDER, FILE }
+enum class DialogType { FOLDER, FILE, ARCHIVE_FORMAT }
 
 class MainActivity : ComponentActivity() {
 
     private var currentPath by mutableStateOf(Environment.getExternalStorageDirectory().absolutePath)
     private var filesList by mutableStateOf(listOf<FileItem>())
     private var isRootAvailable by mutableStateOf(false)
+
+    // Archive Preview State
+    private var isArchivePreview by mutableStateOf(false)
+    private var currentArchivePath by mutableStateOf("")
+    private var archiveInternalPath by mutableStateOf("") // Subpath inside archive
 
     // Selection States
     private val selectedItems = mutableStateListOf<FileItem>()
@@ -69,7 +77,8 @@ class MainActivity : ComponentActivity() {
         val size: Long,
         val lastModified: Long,
         val formattedSize: String = "",
-        val formattedDate: String = ""
+        val formattedDate: String = "",
+        val isArchive: Boolean = false
     )
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -109,25 +118,32 @@ class MainActivity : ComponentActivity() {
                         BackHandler { isSettingsOpen = false }
                     } else {
                         FileExplorerScreen(
-                            currentPath = currentPath,
+                            currentPath = if (isArchivePreview) "$currentArchivePath/$archiveInternalPath" else currentPath,
                             files = filesList,
                             selectedItems = selectedItems,
                             isSelectionMode = isSelectionMode,
+                            isArchivePreview = isArchivePreview,
                             clipboardCount = clipboardFiles.size,
                             onFileClick = { item ->
                                 if (isSelectionMode) {
                                     toggleSelection(item)
                                 } else {
-                                    if (item.isDirectory) {
-                                        currentPath = item.path
+                                    if (item.isArchive && !isArchivePreview) {
+                                        enterArchivePreview(item.path)
+                                    } else if (item.isDirectory) {
+                                        if (isArchivePreview) {
+                                            archiveInternalPath += if (archiveInternalPath.isEmpty()) item.name else "/${item.name}"
+                                        } else {
+                                            currentPath = item.path
+                                        }
                                         refreshFiles()
                                     } else {
-                                        openFile(File(item.path))
+                                        if (!isArchivePreview) openFile(File(item.path))
                                     }
                                 }
                             },
                             onFileLongClick = { item ->
-                                if (!isSelectionMode) {
+                                if (!isSelectionMode && !isArchivePreview) {
                                     isSelectionMode = true
                                     toggleSelection(item)
                                 }
@@ -135,6 +151,15 @@ class MainActivity : ComponentActivity() {
                             onBack = {
                                 if (isSelectionMode) {
                                     clearSelection()
+                                } else if (isArchivePreview) {
+                                    if (archiveInternalPath.isEmpty()) {
+                                        isArchivePreview = false
+                                        currentArchivePath = ""
+                                        refreshFiles()
+                                    } else {
+                                        archiveInternalPath = archiveInternalPath.substringBeforeLast("/", "")
+                                        refreshFiles()
+                                    }
                                 } else {
                                     val parent = File(currentPath).parent
                                     if (parent != null && parent != File(currentPath).path) {
@@ -149,8 +174,10 @@ class MainActivity : ComponentActivity() {
                                 clearSelection()
                             },
                             onRootToggle = {
-                                currentPath = if (currentPath == "/") Environment.getExternalStorageDirectory().absolutePath else "/"
-                                refreshFiles()
+                                if (!isArchivePreview) {
+                                    currentPath = if (currentPath == "/") Environment.getExternalStorageDirectory().absolutePath else "/"
+                                    refreshFiles()
+                                }
                             },
                             onCopy = {
                                 val targets = if (isSelectionMode) selectedItems.toList() else listOf(it)
@@ -167,7 +194,15 @@ class MainActivity : ComponentActivity() {
                                 clearSelection()
                             },
                             onOpenSettings = { isSettingsOpen = true },
-                            onClearSelection = { clearSelection() }
+                            onClearSelection = { clearSelection() },
+                            onArchive = { format ->
+                                createArchive(selectedItems.toList(), format)
+                                clearSelection()
+                            },
+                            onExtract = { item ->
+                                extractArchive(item)
+                                clearSelection()
+                            }
                         )
                     }
                 }
@@ -229,6 +264,19 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshFiles() }
 
     private fun refreshFiles() {
+        lifecycleScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                if (isArchivePreview) {
+                    loadArchiveFiles()
+                } else {
+                    loadLocalFiles()
+                }
+            }
+            filesList = items
+        }
+    }
+
+    private fun loadLocalFiles(): List<FileItem> {
         val file = File(currentPath)
         val items = mutableListOf<FileItem>()
         val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
@@ -237,10 +285,12 @@ class MainActivity : ComponentActivity() {
         if (listFiles != null) {
             listFiles.forEach {
                 if (showHiddenFiles || !it.name.startsWith(".")) {
+                    val isArchive = it.extension.lowercase() in listOf("zip", "tar", "7z")
                     items.add(FileItem(
                         it.name, it.absolutePath, it.isDirectory, it.length(), it.lastModified(),
                         formattedSize = if (it.isDirectory) "" else formatSize(it.length()),
-                        formattedDate = sdf.format(Date(it.lastModified()))
+                        formattedDate = sdf.format(Date(it.lastModified())),
+                        isArchive = isArchive
                     ))
                 }
             }
@@ -256,7 +306,53 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        filesList = items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+        return items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+    }
+
+    private fun loadArchiveFiles(): List<FileItem> {
+        val archiveFile = File(currentArchivePath)
+        val entries = ArchiveUtils.listContents(archiveFile)
+        val items = mutableListOf<FileItem>()
+        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+
+        val seenFolders = mutableSetOf<String>()
+
+        entries.forEach { entry ->
+            val name = entry.name.removeSuffix("/")
+
+            // Check if entry is inside archiveInternalPath
+            val isImmediateChild = if (archiveInternalPath.isEmpty()) {
+                !name.contains("/")
+            } else {
+                name.startsWith("$archiveInternalPath/") && !name.substringAfter("$archiveInternalPath/").contains("/")
+            }
+
+            if (isImmediateChild) {
+                val displayName = if (archiveInternalPath.isEmpty()) name else name.substringAfter("$archiveInternalPath/")
+                if (displayName.isNotBlank()) {
+                    items.add(FileItem(
+                        displayName, "$currentArchivePath/$name", entry.isDirectory, entry.size, entry.lastModified,
+                        formattedSize = if (entry.isDirectory) "" else formatSize(entry.size),
+                        formattedDate = sdf.format(Date(entry.lastModified))
+                    ))
+                }
+            } else if (name.startsWith(if (archiveInternalPath.isEmpty()) "" else "$archiveInternalPath/")) {
+                // It's a nested folder that we haven't added yet
+                val relative = if (archiveInternalPath.isEmpty()) name else name.substringAfter("$archiveInternalPath/")
+                val folderName = relative.substringBefore("/")
+                if (folderName.isNotBlank() && seenFolders.add(folderName)) {
+                    items.add(FileItem(folderName, "", true, 0, 0))
+                }
+            }
+        }
+        return items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+    }
+
+    private fun enterArchivePreview(path: String) {
+        isArchivePreview = true
+        currentArchivePath = path
+        archiveInternalPath = ""
+        refreshFiles()
     }
 
     private fun createFolder(name: String) {
@@ -296,37 +392,85 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun deleteFiles(items: List<FileItem>) {
-        Thread {
-            items.forEach { item ->
-                val file = File(item.path)
-                if (!file.deleteRecursively() && isRootAvailable) {
-                    RootUtils.runCommand("rm -rf \"${item.path}\"")
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                items.forEach { item ->
+                    val file = File(item.path)
+                    if (!file.deleteRecursively() && isRootAvailable) {
+                        RootUtils.runCommand("rm -rf \"${item.path}\"")
+                    }
                 }
             }
-            runOnUiThread { refreshFiles() }
-        }.start()
+            refreshFiles()
+            Toast.makeText(this@MainActivity, "Silindi", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun pasteFiles() {
         val targets = clipboardFiles.toList()
         if (targets.isEmpty()) return
 
-        Thread {
-            targets.forEach { source ->
-                val dest = File(currentPath, source.name)
-                try {
-                    if (source.isDirectory) File(source.path).copyRecursively(dest, overwrite = true)
-                    else File(source.path).copyTo(dest, overwrite = true)
-                } catch (e: Exception) {
-                    if (isRootAvailable) RootUtils.runCommand("cp -rf \"${source.path}\" \"${dest.absolutePath}\"")
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                targets.forEach { source ->
+                    val dest = File(currentPath, source.name)
+                    try {
+                        if (source.isDirectory) File(source.path).copyRecursively(dest, overwrite = true)
+                        else File(source.path).copyTo(dest, overwrite = true)
+                    } catch (e: Exception) {
+                        if (isRootAvailable) RootUtils.runCommand("cp -rf \"${source.path}\" \"${dest.absolutePath}\"")
+                    }
                 }
             }
-            runOnUiThread {
-                clipboardFiles.clear()
-                refreshFiles()
-                Toast.makeText(this, "İşlem tamamlandı", Toast.LENGTH_SHORT).show()
+            clipboardFiles.clear()
+            refreshFiles()
+            Toast.makeText(this@MainActivity, "İşlem tamamlandı", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun createArchive(items: List<FileItem>, format: String) {
+        if (items.isEmpty()) return
+        val outputName = (if (items.size == 1) items.first().name else "arsiv") + "." + format
+        val outputFile = File(currentPath, outputName)
+
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                try {
+                    ArchiveUtils.compress(items.map { File(it.path) }, outputFile, format)
+                    true
+                } catch (e: Exception) {
+                    false
+                }
             }
-        }.start()
+            if (success) {
+                refreshFiles()
+                Toast.makeText(this@MainActivity, "Arşiv oluşturuldu: $outputName", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@MainActivity, "Hata oluştu", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun extractArchive(item: FileItem) {
+        val archiveFile = File(item.path)
+        val outputDir = File(archiveFile.parent, archiveFile.nameWithoutExtension)
+
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                try {
+                    ArchiveUtils.extract(archiveFile, outputDir)
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            if (success) {
+                refreshFiles()
+                Toast.makeText(this@MainActivity, "Çıkartıldı: ${outputDir.name}", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@MainActivity, "Hata oluştu", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun openFile(file: File) {
@@ -350,6 +494,7 @@ fun FileExplorerScreen(
     files: List<MainActivity.FileItem>,
     selectedItems: List<MainActivity.FileItem>,
     isSelectionMode: Boolean,
+    isArchivePreview: Boolean,
     clipboardCount: Int,
     onFileClick: (MainActivity.FileItem) -> Unit,
     onFileLongClick: (MainActivity.FileItem) -> Unit,
@@ -362,18 +507,37 @@ fun FileExplorerScreen(
     onCreateFile: (String) -> Unit,
     onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit,
-    onClearSelection: () -> Unit
+    onClearSelection: () -> Unit,
+    onArchive: (String) -> Unit,
+    onExtract: (MainActivity.FileItem) -> Unit
 ) {
-    var showCreateDialog by remember { mutableStateOf<DialogType?>(null) }
+    var showDialog by remember { mutableStateOf<DialogType?>(null) }
     var renameTarget by remember { mutableStateOf<MainActivity.FileItem?>(null) }
     var inputName by remember { mutableStateOf("") }
 
-    if (showCreateDialog != null) {
+    if (showDialog == DialogType.FOLDER || showDialog == DialogType.FILE) {
         AlertDialog(
-            onDismissRequest = { showCreateDialog = null },
-            title = { Text(if (showCreateDialog == DialogType.FOLDER) "Yeni Klasör" else "Yeni Dosya") },
+            onDismissRequest = { showDialog = null },
+            title = { Text(if (showDialog == DialogType.FOLDER) "Yeni Klasör" else "Yeni Dosya") },
             text = { TextField(value = inputName, onValueChange = { inputName = it }) },
-            confirmButton = { Button(onClick = { if (showCreateDialog == DialogType.FOLDER) onCreateFolder(inputName) else onCreateFile(inputName); showCreateDialog = null; inputName = "" }) { Text("Tamam") } }
+            confirmButton = { Button(onClick = { if (showDialog == DialogType.FOLDER) onCreateFolder(inputName) else onCreateFile(inputName); showDialog = null; inputName = "" }) { Text("Tamam") } }
+        )
+    }
+
+    if (showDialog == DialogType.ARCHIVE_FORMAT) {
+        AlertDialog(
+            onDismissRequest = { showDialog = null },
+            title = { Text("Arşiv Formatı Seçin") },
+            text = {
+                Column {
+                    listOf("zip", "tar", "7z").forEach { format ->
+                        Row(modifier = Modifier.fillMaxWidth().clickable { onArchive(format); showDialog = null }.padding(12.dp)) {
+                            Text(format.uppercase())
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
         )
     }
 
@@ -390,18 +554,19 @@ fun FileExplorerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isSelectionMode) "${selectedItems.size} seçildi" else currentPath, maxLines = 1, fontSize = 16.sp) },
+                title = { Text(if (isSelectionMode) "${selectedItems.size} seçildi" else currentPath, maxLines = 1, fontSize = 14.sp) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(if (isSelectionMode) Icons.Default.Close else Icons.Default.ArrowBack, null) } },
                 actions = {
                     if (isSelectionMode) {
-                        IconButton(onClick = { onCopy(selectedItems.first()) /* Multi copy simplified */ }) { Icon(Icons.Default.ContentCopy, null) }
+                        IconButton(onClick = { showDialog = DialogType.ARCHIVE_FORMAT }) { Icon(Icons.Default.Inventory, "Arşivle") }
+                        IconButton(onClick = { onCopy(selectedItems.first()) }) { Icon(Icons.Default.ContentCopy, null) }
                         IconButton(onClick = { onDelete(selectedItems.first()) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
-                    } else {
+                    } else if (!isArchivePreview) {
                         if (clipboardCount > 0) {
                             IconButton(onClick = onPaste) { BadgedBox(badge = { Badge { Text("$clipboardCount") } }) { Icon(Icons.Default.ContentPaste, null) } }
                         }
-                        IconButton(onClick = { showCreateDialog = DialogType.FILE; inputName = "yeni.txt" }) { Icon(Icons.Default.NoteAdd, null) }
-                        IconButton(onClick = { showCreateDialog = DialogType.FOLDER; inputName = "" }) { Icon(Icons.Default.CreateNewFolder, null) }
+                        IconButton(onClick = { showDialog = DialogType.FILE; inputName = "yeni.txt" }) { Icon(Icons.Default.NoteAdd, null) }
+                        IconButton(onClick = { showDialog = DialogType.FOLDER; inputName = "" }) { Icon(Icons.Default.CreateNewFolder, null) }
                         IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null) }
                         IconButton(onClick = onRootToggle) { Icon(Icons.Default.Shield, null) }
                     }
@@ -410,13 +575,15 @@ fun FileExplorerScreen(
         }
     ) { padding ->
         LazyColumn(modifier = Modifier.padding(padding)) {
-            items(files, key = { it.path }) { file ->
+            items(files, key = { it.path + it.name }) { file ->
                 FileRow(
                     file = file,
                     isSelected = selectedItems.contains(file),
+                    isArchivePreview = isArchivePreview,
                     onFileClick = { onFileClick(file) },
                     onFileLongClick = { onFileLongClick(file) },
-                    onRename = { renameTarget = it }
+                    onRename = { renameTarget = it },
+                    onExtract = { onExtract(file) }
                 )
             }
         }
@@ -428,9 +595,11 @@ fun FileExplorerScreen(
 fun FileRow(
     file: MainActivity.FileItem,
     isSelected: Boolean,
+    isArchivePreview: Boolean,
     onFileClick: () -> Unit,
     onFileLongClick: () -> Unit,
-    onRename: (MainActivity.FileItem) -> Unit
+    onRename: (MainActivity.FileItem) -> Unit,
+    onExtract: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -441,9 +610,9 @@ fun FileRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = if (file.isDirectory) Icons.Default.Folder else Icons.Default.FilePresent,
+            imageVector = if (file.isDirectory) Icons.Default.Folder else if (file.isArchive) Icons.Default.Inventory else Icons.Default.FilePresent,
             contentDescription = null,
-            tint = if (file.isDirectory) MaterialTheme.colorScheme.primary else Color.Gray,
+            tint = if (file.isDirectory) MaterialTheme.colorScheme.primary else if (file.isArchive) Color(0xFFFF9800) else Color.Gray,
             modifier = Modifier.size(32.dp)
         )
         Spacer(modifier = Modifier.width(16.dp))
@@ -453,7 +622,10 @@ fun FileRow(
                 Text("${file.formattedSize} • ${file.formattedDate}", fontSize = 12.sp, color = Color.Gray)
             }
         }
-        if (!isSelected) {
+        if (!isSelected && !isArchivePreview) {
+            if (file.isArchive) {
+                IconButton(onClick = onExtract) { Icon(Icons.Default.Unarchive, null, modifier = Modifier.size(18.dp), tint = Color.Gray) }
+            }
             IconButton(onClick = { onRename(file) }) { Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp), tint = Color.Gray) }
         }
     }
