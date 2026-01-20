@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
     // Search State
     private var searchQuery by mutableStateOf("")
     private var isSearchActive by mutableStateOf(false)
+    private val searchResults = mutableStateListOf<FileItem>()
 
     private lateinit var prefs: SharedPreferences
 
@@ -198,11 +199,18 @@ class MainActivity : ComponentActivity() {
                                         clipboardFiles = clipboardFiles,
                                         isCutMode = isCutMode,
                                         searchQuery = searchQuery,
+                                        searchResults = searchResults,
                                         isSearchActive = isSearchActive,
-                                        onSearchQueryChange = { searchQuery = it },
+                                        onSearchQueryChange = {
+                                            searchQuery = it
+                                            refreshFiles()
+                                        },
                                         onSearchToggle = {
                                             isSearchActive = !isSearchActive
-                                            if (!isSearchActive) searchQuery = ""
+                                            if (!isSearchActive) {
+                                                searchQuery = ""
+                                                refreshFiles()
+                                            }
                                         }
                                     )
                                 }
@@ -264,6 +272,8 @@ class MainActivity : ComponentActivity() {
                         refreshFiles()
                     }
                 } else {
+                    isSearchActive = false
+                    searchQuery = ""
                     currentPath = item.path
                     refreshFiles()
                 }
@@ -383,12 +393,57 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshFiles() {
         refreshJob?.cancel()
-        refreshJob = lifecycleScope.launch {
-            val items = withContext(Dispatchers.IO) {
-                if (isArchivePreview) loadArchiveFiles() else loadLocalFiles()
+        if (isSearchActive && searchQuery.isNotBlank()) {
+            startRecursiveSearch(searchQuery)
+        } else {
+            refreshJob = lifecycleScope.launch {
+                val items = withContext(Dispatchers.IO) {
+                    if (isArchivePreview) loadArchiveFiles() else loadLocalFiles()
+                }
+                filesList = items
             }
-            filesList = items
         }
+    }
+
+    private fun startRecursiveSearch(query: String) {
+        searchResults.clear()
+        refreshJob = lifecycleScope.launch {
+            loadingMessage = "Aranıyor..."
+            withContext(Dispatchers.IO) {
+                searchRecursive(File(currentPath), query)
+            }
+            loadingMessage = null
+        }
+    }
+
+    private fun searchRecursive(dir: File, query: String, depth: Int = 0) {
+        if (depth > 15) return
+        val files = dir.listFiles() ?: return
+        for (file in files) {
+            if (file.name.contains(query, ignoreCase = true)) {
+                val item = createFileItem(file)
+                lifecycleScope.launch(Dispatchers.Main) {
+                    searchResults.add(item)
+                }
+            }
+            if (file.isDirectory) searchRecursive(file, query, depth + 1)
+        }
+    }
+
+    private fun createFileItem(file: File): FileItem {
+        val ext = file.extension.lowercase()
+        val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2", "iso", "img", "qcow2")
+        val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop")
+        val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
+        val isHtml = ext in listOf("html", "htm")
+        val icon = if (file.isDirectory) Icons.Default.Folder else IconUtils.getIconForExtension(ext)
+
+        return FileItem(
+            file.name, file.absolutePath, file.isDirectory, file.length(), file.lastModified(),
+            formattedSize = if (file.isDirectory) "" else formatSize(file.length()),
+            formattedDate = sdf.format(Date(file.lastModified())),
+            icon = icon, isArchive = isArchive, isText = isText, isAudio = isAudio, isHtml = isHtml
+        )
     }
 
     private fun loadLocalFiles(): List<FileItem> {
@@ -666,6 +721,7 @@ fun FileExplorerScreen(
     clipboardFiles: List<MainActivity.FileItem>,
     isCutMode: Boolean,
     searchQuery: String,
+    searchResults: List<MainActivity.FileItem>,
     isSearchActive: Boolean,
     onSearchQueryChange: (String) -> Unit,
     onSearchToggle: () -> Unit
@@ -676,10 +732,7 @@ fun FileExplorerScreen(
     var showAddMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    val filteredFiles = remember(files, searchQuery) {
-        if (searchQuery.isBlank()) files
-        else files.filter { it.name.contains(searchQuery, ignoreCase = true) }
-    }
+    val displayedFiles = if (isSearchActive && searchQuery.isNotBlank()) searchResults else files
 
     if (showDialog == DialogType.FOLDER || showDialog == DialogType.FILE) {
         AlertDialog(
@@ -723,7 +776,7 @@ fun FileExplorerScreen(
                         TextField(
                             value = searchQuery,
                             onValueChange = onSearchQueryChange,
-                            placeholder = { Text("Ara...") },
+                            placeholder = { Text(if (loadingMessage == "Aranıyor...") "Aranıyor... (${searchResults.size})" else "Ara...") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             colors = TextFieldDefaults.textFieldColors(containerColor = Color.Transparent)
@@ -779,7 +832,7 @@ fun FileExplorerScreen(
         }
     ) { padding ->
         LazyColumn(state = listState, modifier = Modifier.padding(padding)) {
-            items(filteredFiles, key = { it.path + it.name }) { file ->
+            items(displayedFiles, key = { it.path + it.name }) { file ->
                 val isInClipboard = clipboardFiles.any { it.path == file.path }
                 FileRow(
                     file = file,

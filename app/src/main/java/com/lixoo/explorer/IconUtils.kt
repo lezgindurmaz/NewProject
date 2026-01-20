@@ -12,7 +12,7 @@ object IconUtils {
             "mp3", "wav", "ogg", "m4a", "flac" -> Icons.Default.AudioFile
             "apk" -> Icons.Default.InstallMobile
             "zip", "7z", "tar", "gz", "bz2", "xz", "lz4", "tgz", "tbz2" -> Icons.Default.Inventory
-            "iso", "img", "qcow2" -> Icons.Default.Album
+            "iso", "img", "qcow2" -> Icons.Default.DiscFull
             "pdf" -> Icons.Default.PictureAsPdf
             "doc", "docx", "txt", "log", "rtf", "odt" -> Icons.Default.Description
             "xls", "xlsx", "csv" -> Icons.Default.TableChart

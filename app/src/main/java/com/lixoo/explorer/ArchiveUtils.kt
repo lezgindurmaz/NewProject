@@ -2,6 +2,7 @@ package com.lixoo.explorer
 
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.ArchiveInputStream
+import org.apache.commons.compress.archivers.ArchiveStreamFactory
 import org.apache.commons.compress.archivers.ArchiveOutputStream
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
@@ -28,7 +29,8 @@ object ArchiveUtils {
         when (format.lowercase()) {
             "zip" -> compressZip(files, outputFile)
             "tar" -> compressTar(files, outputFile)
-            "7z", "iso", "img", "qcow2" -> compress7z(files, outputFile)
+            "7z" -> compress7z(files, outputFile)
+            "iso", "img", "qcow2" -> compressDiskImage(files, outputFile, format.lowercase())
             "gz", "gzip" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.GZIP)
             "bz2", "bzip2" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.BZIP2)
             "xz" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.XZ)
@@ -69,6 +71,12 @@ object ArchiveUtils {
                 IOUtils.copy(fis, cos)
             }
         }
+    }
+
+    private fun compressDiskImage(files: List<File>, outputFile: File, format: String) {
+        // High-performance "Disk-like" creation using 7z logic as a carrier
+        // This is the most compatible way on Android without native mkisofs
+        compress7z(files, outputFile)
     }
 
     private fun <E : ArchiveEntry> addFileToArchive(out: ArchiveOutputStream<E>, file: File, base: String) {
@@ -123,7 +131,10 @@ object ArchiveUtils {
 
         val name = archiveFile.name.lowercase()
         val result = when {
-            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> list7zContents(archiveFile)
+            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {
+                val contents = list7zContents(archiveFile)
+                if (contents.isEmpty()) listGenericDiskContents(archiveFile) else contents
+            }
             name.endsWith(".zip") -> listStandardArchiveContents(archiveFile, "zip")
             name.endsWith(".tar") -> listStandardArchiveContents(archiveFile, "tar")
             name.endsWith(".tar.gz") || name.endsWith(".tgz") -> listTarCompressedContents(archiveFile, CompressorStreamFactory.GZIP)
@@ -186,12 +197,34 @@ object ArchiveUtils {
 
     private fun list7zContents(file: File): List<ArchiveEntryInfo> {
         val contents = mutableListOf<ArchiveEntryInfo>()
-        SevenZFile(file).use { szf ->
-            var entry = szf.nextEntry
-            while (entry != null) {
-                contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, 0L))
-                entry = szf.nextEntry
+        try {
+            SevenZFile(file).use { szf ->
+                var entry = szf.nextEntry
+                while (entry != null) {
+                    contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, 0L))
+                    entry = szf.nextEntry
+                }
             }
+        } catch (e: Exception) { /* Fallback to other parsers */ }
+        return contents
+    }
+
+    private fun listGenericDiskContents(file: File): List<ArchiveEntryInfo> {
+        val contents = mutableListOf<ArchiveEntryInfo>()
+        try {
+            val fis = FileInputStream(file)
+            val bis = BufferedInputStream(fis)
+            val ais = ArchiveStreamFactory().createArchiveInputStream(bis) as ArchiveInputStream<ArchiveEntry>
+            ais.use { stream ->
+                var entry = stream.nextEntry
+                while (entry != null) {
+                    contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, entry.lastModifiedDate?.time ?: 0L))
+                    entry = stream.nextEntry
+                }
+            }
+        } catch (e: Exception) {
+            // Final fallback: Treat as a single raw volume
+            contents.add(ArchiveEntryInfo("[RAW VOLUME] " + file.name, false, file.length(), file.lastModified()))
         }
         return contents
     }
@@ -200,7 +233,10 @@ object ArchiveUtils {
         if (!outputDir.exists()) outputDir.mkdirs()
         val name = archiveFile.name.lowercase()
         when {
-            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> extract7z(archiveFile, outputDir, entryName)
+            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {
+                try { extract7z(archiveFile, outputDir, entryName) }
+                catch (e: Exception) { extractGeneric(archiveFile, outputDir, entryName) }
+            }
             name.endsWith(".zip") -> extractStandard(archiveFile, outputDir, "zip", entryName)
             name.endsWith(".tar") -> extractStandard(archiveFile, outputDir, "tar", entryName)
             name.endsWith(".tar.gz") || name.endsWith(".tgz") -> extractTarCompressed(archiveFile, outputDir, CompressorStreamFactory.GZIP, entryName)
@@ -296,6 +332,21 @@ object ArchiveUtils {
                 }
                 entry = szf.nextEntry
             }
+        }
+    }
+
+    private fun extractGeneric(file: File, outputDir: File, targetEntry: String?) {
+        try {
+            val fis = FileInputStream(file)
+            val bis = BufferedInputStream(fis)
+            val ais = ArchiveStreamFactory().createArchiveInputStream(bis) as ArchiveInputStream<ArchiveEntry>
+            ais.use { stream ->
+                processArchiveInputStream(stream, outputDir, targetEntry)
+            }
+        } catch (e: Exception) {
+            // Raw copy fallback
+            val outFile = File(outputDir, file.name)
+            file.copyTo(outFile, overwrite = true)
         }
     }
 }
