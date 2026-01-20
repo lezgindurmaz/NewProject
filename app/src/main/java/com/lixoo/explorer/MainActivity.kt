@@ -62,6 +62,10 @@ enum class Screen { EXPLORER, SETTINGS, EDITOR, PLAYER, HTML_VIEWER }
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        private val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+    }
+
     private var currentPath by mutableStateOf(Environment.getExternalStorageDirectory().absolutePath)
     private var filesList by mutableStateOf(listOf<FileItem>())
     private var isRootAvailable by mutableStateOf(false)
@@ -365,7 +369,6 @@ class MainActivity : ComponentActivity() {
     private fun loadLocalFiles(): List<FileItem> {
         val file = File(currentPath)
         val items = mutableListOf<FileItem>()
-        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
         // Handle Android/data via SAF if needed
         if (currentPath.contains("/Android/data") && !isRootAvailable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -441,28 +444,29 @@ class MainActivity : ComponentActivity() {
         val items = mutableListOf<FileItem>()
         val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
         val seenFolders = mutableSetOf<String>()
+        val prefix = if (archiveInternalPath.isEmpty()) "" else "$archiveInternalPath/"
+        val prefixLen = prefix.length
 
         entries.forEach { entry ->
             val fullName = entry.name.removeSuffix("/")
-            val isImmediateChild = if (archiveInternalPath.isEmpty()) !fullName.contains("/")
-            else fullName.startsWith("$archiveInternalPath/") && !fullName.substringAfter("$archiveInternalPath/").contains("/")
 
-            if (isImmediateChild) {
-                val displayName = if (archiveInternalPath.isEmpty()) fullName else fullName.substringAfter("$archiveInternalPath/")
-                if (displayName.isNotBlank()) {
-                    val icon = if (entry.isDirectory) Icons.Default.Folder else IconUtils.getIconForExtension(File(displayName).extension)
+            if (fullName.length > prefixLen && fullName.startsWith(prefix)) {
+                val relative = fullName.substring(prefixLen)
+                val firstSlash = relative.indexOf('/')
+                val isDir = firstSlash != -1 || entry.isDirectory
+                val name = if (firstSlash != -1) relative.substring(0, firstSlash) else relative
+
+                if (isDir) {
+                    if (seenFolders.add(name)) {
+                        items.add(FileItem(name, "", true, 0, 0, icon = Icons.Default.Folder))
+                    }
+                } else {
                     items.add(FileItem(
-                        displayName, entry.name, entry.isDirectory, entry.size, entry.lastModified,
-                        formattedSize = if (entry.isDirectory) "" else formatSize(entry.size),
+                        name, entry.name, false, entry.size, entry.lastModified,
+                        formattedSize = formatSize(entry.size),
                         formattedDate = sdf.format(Date(entry.lastModified)),
-                        icon = icon
+                        icon = IconUtils.getIconForExtension(name.substringAfterLast(".", ""))
                     ))
-                }
-            } else if (fullName.startsWith(if (archiveInternalPath.isEmpty()) "" else "$archiveInternalPath/")) {
-                val relative = if (archiveInternalPath.isEmpty()) fullName else fullName.substringAfter("$archiveInternalPath/")
-                val folderName = relative.substringBefore("/")
-                if (folderName.isNotBlank() && seenFolders.add(folderName)) {
-                    items.add(FileItem(folderName, "", true, 0, 0, icon = Icons.Default.Folder))
                 }
             }
         }
@@ -721,6 +725,11 @@ fun FileRow(
     onFileClick: () -> Unit, onFileLongClick: () -> Unit,
     onRename: (MainActivity.FileItem) -> Unit, onExtract: () -> Unit
 ) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tint = remember(file.isDirectory, file.isArchive, file.isAudio, primary) {
+        if (file.isDirectory) primary else if (file.isArchive) Color(0xFFFF9800) else if (file.isAudio) Color(0xFF4CAF50) else Color.Gray
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth()
             .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
@@ -728,7 +737,6 @@ fun FileRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val tint = if (file.isDirectory) MaterialTheme.colorScheme.primary else if (file.isArchive) Color(0xFFFF9800) else if (file.isAudio) Color(0xFF4CAF50) else Color.Gray
         Icon(file.icon, null, tint = tint, modifier = Modifier.size(32.dp))
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -764,7 +772,13 @@ fun HtmlViewerScreen(file: File, onBack: () -> Unit) {
             factory = { context ->
                 WebView(context).apply {
                     webViewClient = WebViewClient()
-                    settings.javaScriptEnabled = true
+                    settings.apply {
+                        javaScriptEnabled = true
+                        allowFileAccess = true
+                        allowContentAccess = true
+                        allowFileAccessFromFileURLs = true
+                        allowUniversalAccessFromFileURLs = true
+                    }
                     loadUrl("file://${file.absolutePath}")
                 }
             },
@@ -837,8 +851,13 @@ fun SettingsToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -
 fun formatSize(size: Long): String {
     if (size <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
-    return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+    var s = size.toDouble()
+    var unitIndex = 0
+    while (s >= 1024 && unitIndex < units.size - 1) {
+        s /= 1024
+        unitIndex++
+    }
+    return String.format(Locale.US, "%.1f %s", s, units[unitIndex])
 }
 
 @Composable
