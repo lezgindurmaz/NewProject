@@ -780,27 +780,45 @@ fun FileExplorerScreen(
     if (showDialog == DialogType.DISK_IMAGE_FORMAT) {
         var selectedFormat by remember { mutableStateOf("iso") }
         var selectedFS by remember { mutableStateOf("ISO9660") }
+        var volumeLabel by remember { mutableStateOf("LIXOO_DISK") }
+
         AlertDialog(
             onDismissRequest = { showDialog = null },
-            title = { Text("Disk Kalıbı Oluştur") },
+            title = { Text("Yeni Disk Kalıbı") },
             text = {
                 Column {
+                    Text("Disk Etiketi:", fontWeight = FontWeight.Bold)
+                    TextField(value = volumeLabel, onValueChange = { volumeLabel = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     Text("Format:", fontWeight = FontWeight.Bold)
-                    Row {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         listOf("iso", "img", "qcow2").forEach { f ->
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(4.dp)) {
                                 RadioButton(selected = selectedFormat == f, onClick = { selectedFormat = f })
                                 Text(f.uppercase())
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     Text("Dosya Sistemi:", fontWeight = FontWeight.Bold)
-                    Row {
-                        listOf("ISO9660", "FAT32", "RAW").forEach { fs ->
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFS = fs }.padding(8.dp)) {
-                                RadioButton(selected = selectedFS == fs, onClick = { selectedFS = fs })
-                                Text(fs)
+                    Column {
+                        val fsOptions = when (selectedFormat) {
+                            "iso" -> listOf("ISO9660", "UDF", "Joliet")
+                            "img" -> listOf("FAT32", "NTFS", "EXT4", "RAW")
+                            else -> listOf("QCOW2")
+                        }
+                        if (selectedFS !in fsOptions) selectedFS = fsOptions[0]
+
+                        fsOptions.chunked(2).forEach { row ->
+                            Row {
+                                row.forEach { fs ->
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFS = fs }.padding(8.dp).weight(1f)) {
+                                        RadioButton(selected = selectedFS == fs, onClick = { selectedFS = fs })
+                                        Text(fs)
+                                    }
+                                }
                             }
                         }
                     }

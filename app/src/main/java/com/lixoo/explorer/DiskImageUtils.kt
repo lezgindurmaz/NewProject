@@ -24,6 +24,12 @@ object DiskImageUtils {
             raf.read(isoId)
             if (isoId.contentEquals("CD001".toByteArray())) return true
 
+            // FAT32: 55 AA at 510
+            raf.seek(510)
+            val fatSig = ByteArray(2)
+            raf.read(fatSig)
+            if (fatSig[0] == 0x55.toByte() && fatSig[1] == 0xAA.toByte()) return true
+
         } catch (e: Exception) {} finally { raf.close() }
         return false
     }
@@ -46,6 +52,14 @@ object DiskImageUtils {
             raf.read(isoId)
             if (isoId.contentEquals("CD001".toByteArray())) {
                 return parseIso9660(file)
+            }
+
+            raf.seek(510)
+            val fatSig = ByteArray(2)
+            raf.read(fatSig)
+            if (fatSig[0] == 0x55.toByte() && fatSig[1] == 0xAA.toByte()) {
+                contents.add(ArchiveUtils.ArchiveEntryInfo("[FAT32 VOLUME] " + file.name, false, file.length(), file.lastModified()))
+                return contents
             }
 
             // Default RAW fallback
@@ -117,24 +131,38 @@ object DiskImageUtils {
     }
 
     fun extractDiskContent(file: File, outputDir: File, entryName: String? = null) {
-        // Implementation for disk image extraction
-        // If entryName is null, extract everything (or raw copy if unsupported)
-        if (entryName == null) {
-            val dest = File(outputDir, file.name)
-            file.copyTo(dest, overwrite = true)
-            return
-        }
-
-        // Selective extraction for ISO
         if (file.name.lowercase().endsWith(".iso")) {
-             extractFromIso(file, outputDir, entryName)
+            extractFromIso(file, outputDir, entryName)
         } else {
-             val dest = File(outputDir, file.name)
-             file.copyTo(dest, overwrite = true)
+            // Fallback for QCOW2 and IMG using ArchiveStreamFactory
+            try {
+                val fis = java.io.FileInputStream(file)
+                val bis = java.io.BufferedInputStream(fis)
+                val ais = org.apache.commons.compress.archivers.ArchiveStreamFactory().createArchiveInputStream(bis) as org.apache.commons.compress.archivers.ArchiveInputStream<org.apache.commons.compress.archivers.ArchiveEntry>
+                var entry = ais.nextEntry
+                while (entry != null) {
+                    if (entryName == null || entry.name == entryName || entry.name.startsWith("$entryName/")) {
+                        val outFile = File(outputDir, entry.name)
+                        if (entry.isDirectory) {
+                            outFile.mkdirs()
+                        } else {
+                            outFile.parentFile?.mkdirs()
+                            outFile.outputStream().use { out -> ais.copyTo(out) }
+                        }
+                    }
+                    entry = ais.nextEntry
+                }
+                ais.close()
+            } catch (e: Exception) {
+                // Last resort: raw copy if entryName is null, otherwise fail
+                if (entryName == null) {
+                    file.copyTo(File(outputDir, file.name), overwrite = true)
+                }
+            }
         }
     }
 
-    private fun extractFromIso(file: File, outputDir: File, entryName: String) {
+    private fun extractFromIso(file: File, outputDir: File, entryName: String?) {
         val raf = RandomAccessFile(file, "r")
         try {
             raf.seek(32768 + 156)
@@ -143,8 +171,60 @@ object DiskImageUtils {
             val extentLocation = getIntLE(rootRecord, 2)
             val dataLength = getIntLE(rootRecord, 10)
 
-            findAndExtractIsoEntry(raf, extentLocation.toLong() * 2048, dataLength.toLong(), "", entryName, outputDir)
+            if (entryName == null) {
+                extractIsoDirectoryRecursive(raf, extentLocation.toLong() * 2048, dataLength.toLong(), outputDir)
+            } else {
+                findAndExtractIsoEntry(raf, extentLocation.toLong() * 2048, dataLength.toLong(), "", entryName, outputDir)
+            }
         } finally { raf.close() }
+    }
+
+    private fun extractIsoDirectoryRecursive(raf: RandomAccessFile, offset: Long, length: Long, currentOutputDir: File) {
+        raf.seek(offset)
+        var current = 0L
+        val entries = mutableListOf<Triple<Long, Long, String>>() // extent, length, name
+
+        while (current < length) {
+            val recordLength = raf.read()
+            if (recordLength <= 0) break
+            val record = ByteArray(recordLength - 1)
+            raf.read(record)
+            val flags = record[24].toInt()
+            val isDir = (flags and 0x02) != 0
+            val nameLen = record[31].toInt()
+            var name = String(record, 32, nameLen, Charset.forName("ASCII")).split(";")[0]
+
+            if (name != "\u0000" && name != "\u0001") {
+                val extent = getIntLE(record, 1)
+                val dataSize = getIntLE(record, 9)
+                val outFile = File(currentOutputDir, name)
+
+                if (isDir) {
+                    outFile.mkdirs()
+                    entries.add(Triple(extent.toLong() * 2048, dataSize.toLong(), outFile.absolutePath))
+                } else {
+                    val savedPos = raf.filePointer
+                    raf.seek(extent.toLong() * 2048)
+                    outFile.outputStream().use { out ->
+                        val buffer = ByteArray(8192)
+                        var remaining = dataSize.toLong()
+                        while (remaining > 0) {
+                            val read = raf.read(buffer, 0, Math.min(buffer.size.toLong(), remaining).toInt())
+                            if (read <= 0) break
+                            out.write(buffer, 0, read)
+                            remaining -= read
+                        }
+                    }
+                    raf.seek(savedPos)
+                }
+            }
+            current += recordLength
+        }
+
+        // Recurse after reading the current directory to avoid seek conflicts
+        for (e in entries) {
+            extractIsoDirectoryRecursive(raf, e.first, e.second, File(e.third))
+        }
     }
 
     private fun findAndExtractIsoEntry(raf: RandomAccessFile, offset: Long, length: Long, currentPath: String, targetName: String, outputDir: File) {
