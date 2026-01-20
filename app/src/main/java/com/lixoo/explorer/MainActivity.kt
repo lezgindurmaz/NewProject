@@ -190,8 +190,8 @@ class MainActivity : ComponentActivity() {
                                             createArchive(selectedItems.toList(), format)
                                             clearSelection()
                                         },
-                                        onDiskImage = { format, fs, label ->
-                                            createDiskImage(selectedItems.toList(), format, fs, label)
+                                        onDiskImage = { format, fs, label, sizeMB ->
+                                            createDiskImage(selectedItems.toList(), format, fs, label, sizeMB)
                                             clearSelection()
                                         },
                                         onExtract = { item ->
@@ -601,13 +601,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun createDiskImage(items: List<FileItem>, format: String, fs: String, label: String) {
+    private fun createDiskImage(items: List<FileItem>, format: String, fs: String, label: String, sizeMB: Double) {
         val outputName = (if (items.size == 1) items.first().name else "disk") + "." + format
         val outputFile = File(currentPath, outputName)
         lifecycleScope.launch {
-            loadingMessage = "Disk kalıbı oluşturuluyor ($fs)..."
+            loadingMessage = "Disk kalıbı oluşturuluyor ($format)..."
             withContext(Dispatchers.IO) {
-                try { ArchiveUtils.compressDiskImage(items.map { File(it.path) }, outputFile, format, label) } catch (e: Exception) {}
+                try { ArchiveUtils.compressDiskImage(items.map { File(it.path) }, outputFile, format, label, sizeMB) } catch (e: Exception) {}
             }
             loadingMessage = null
             refreshFiles()
@@ -734,7 +734,7 @@ fun FileExplorerScreen(
     onPaste: () -> Unit, onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit, onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit, onArchive: (String) -> Unit,
-    onDiskImage: (String, String, String) -> Unit,
+    onDiskImage: (String, String, String, Double) -> Unit,
     onExtract: (MainActivity.FileItem) -> Unit,
     onRequestDataPermission: () -> Unit,
     clipboardFiles: List<MainActivity.FileItem>,
@@ -781,6 +781,7 @@ fun FileExplorerScreen(
         var selectedFormat by remember { mutableStateOf("iso") }
         var selectedFS by remember { mutableStateOf("ISO9660") }
         var volumeLabel by remember { mutableStateOf("LIXOO_DISK") }
+        var imgSize by remember { mutableStateOf("1.44") }
 
         AlertDialog(
             onDismissRequest = { showDialog = null },
@@ -792,39 +793,52 @@ fun FileExplorerScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text("Format:", fontWeight = FontWeight.Bold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        listOf("iso").forEach { f ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        listOf("iso", "img").forEach { f ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(4.dp)) {
                                 RadioButton(selected = selectedFormat == f, onClick = { selectedFormat = f })
                                 Text(f.uppercase())
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("Dosya Sistemi:", fontWeight = FontWeight.Bold)
-                    Column {
-                        val fsOptions = when (selectedFormat) {
-                            "iso" -> listOf("ISO9660", "UDF", "Joliet")
-                            else -> listOf("ISO9660")
-                        }
-                        if (selectedFS !in fsOptions) selectedFS = fsOptions[0]
+                    if (selectedFormat == "iso") {
+                        Text("Dosya Sistemi:", fontWeight = FontWeight.Bold)
+                        Column {
+                            val fsOptions = listOf("ISO9660", "UDF", "Joliet")
+                            if (selectedFS !in fsOptions) selectedFS = fsOptions[0]
 
-                        fsOptions.chunked(2).forEach { row ->
-                            Row {
-                                row.forEach { fs ->
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFS = fs }.padding(8.dp).weight(1f)) {
-                                        RadioButton(selected = selectedFS == fs, onClick = { selectedFS = fs })
-                                        Text(fs)
+                            fsOptions.chunked(2).forEach { row ->
+                                Row {
+                                    row.forEach { fs ->
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFS = fs }.padding(8.dp).weight(1f)) {
+                                            RadioButton(selected = selectedFS == fs, onClick = { selectedFS = fs })
+                                            Text(fs)
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else if (selectedFormat == "img") {
+                        Text("Disk Boyutu (MB):", fontWeight = FontWeight.Bold)
+                        TextField(
+                            value = imgSize,
+                            onValueChange = { if (it.isEmpty() || it.toDoubleOrNull() != null) imgSize = it },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("FAT16 formatında boş bir disk oluşturulur.", fontSize = 11.sp, color = Color.Gray)
                     }
                 }
             },
             confirmButton = {
-                Button(onClick = { onDiskImage(selectedFormat, selectedFS, volumeLabel); showDialog = null }) { Text("Oluştur") }
+                Button(onClick = {
+                    val size = imgSize.toDoubleOrNull() ?: 1.44
+                    onDiskImage(selectedFormat, selectedFS, volumeLabel, size)
+                    showDialog = null
+                }) { Text("Oluştur") }
             }
         )
     }

@@ -73,11 +73,11 @@ object ArchiveUtils {
         }
     }
 
-    fun compressDiskImage(files: List<File>, outputFile: File, format: String, label: String = "LIXOO_DISK") {
-        if (format.lowercase() == "iso") {
-            DiskImageUtils.createIso(files, outputFile, label)
-        } else {
-            compressZip(files, outputFile)
+    fun compressDiskImage(files: List<File>, outputFile: File, format: String, label: String = "LIXOO_DISK", sizeMB: Double = 1.44) {
+        when (format.lowercase()) {
+            "iso" -> DiskImageUtils.createIso(files, outputFile, label)
+            "img" -> DiskImageUtils.createImg(outputFile, sizeMB, label)
+            else -> compressZip(files, outputFile)
         }
     }
 
