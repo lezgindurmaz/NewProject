@@ -132,17 +132,17 @@ object ArchiveUtils {
         return contents
     }
 
-    fun extract(archiveFile: File, outputDir: File) {
+    fun extract(archiveFile: File, outputDir: File, entryName: String? = null) {
         if (!outputDir.exists()) outputDir.mkdirs()
         val extension = archiveFile.extension.lowercase()
         if (extension == "7z") {
-            extract7z(archiveFile, outputDir)
+            extract7z(archiveFile, outputDir, entryName)
         } else {
-            extractStandard(archiveFile, outputDir, extension)
+            extractStandard(archiveFile, outputDir, extension, entryName)
         }
     }
 
-    private fun extractStandard(file: File, outputDir: File, format: String) {
+    private fun extractStandard(file: File, outputDir: File, format: String, targetEntry: String?) {
         val inputStream: ArchiveInputStream<*> = when (format) {
             "zip" -> ZipArchiveInputStream(FileInputStream(file))
             "tar" -> TarArchiveInputStream(FileInputStream(file))
@@ -151,36 +151,58 @@ object ArchiveUtils {
         inputStream.use { ais ->
             var entry = ais.nextEntry
             while (entry != null) {
-                val outFile = File(outputDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { out ->
-                        IOUtils.copy(ais, out)
+                if (targetEntry == null || entry.name == targetEntry || entry.name.startsWith("$targetEntry/")) {
+                    val entryRelativeName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
+                        entry.name.substringAfter("$targetEntry/")
+                    } else if (targetEntry != null) {
+                        File(entry.name).name
+                    } else {
+                        entry.name
                     }
+
+                    val outFile = File(outputDir, entryRelativeName)
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { out ->
+                            IOUtils.copy(ais, out)
+                        }
+                    }
+                    if (targetEntry != null && entry.name == targetEntry && !entry.isDirectory) break
                 }
                 entry = ais.nextEntry
             }
         }
     }
 
-    private fun extract7z(file: File, outputDir: File) {
+    private fun extract7z(file: File, outputDir: File, targetEntry: String?) {
         SevenZFile(file).use { szf ->
             var entry = szf.nextEntry
             while (entry != null) {
-                val outFile = File(outputDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { out ->
-                        val buffer = ByteArray(8192)
-                        var len: Int
-                        while (szf.read(buffer).also { len = it } != -1) {
-                            out.write(buffer, 0, len)
+                if (targetEntry == null || entry.name == targetEntry || entry.name.startsWith("$targetEntry/")) {
+                    val entryRelativeName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
+                        entry.name.substringAfter("$targetEntry/")
+                    } else if (targetEntry != null) {
+                        File(entry.name).name
+                    } else {
+                        entry.name
+                    }
+
+                    val outFile = File(outputDir, entryRelativeName)
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { out ->
+                            val buffer = ByteArray(8192)
+                            var len: Int
+                            while (szf.read(buffer).also { len = it } != -1) {
+                                out.write(buffer, 0, len)
+                            }
                         }
                     }
+                    if (targetEntry != null && entry.name == targetEntry && !entry.isDirectory) break
                 }
                 entry = szf.nextEntry
             }
