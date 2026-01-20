@@ -3,13 +3,13 @@ package com.lixoo.explorer
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.ArchiveInputStream
 import org.apache.commons.compress.archivers.ArchiveOutputStream
-import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import org.apache.commons.compress.compressors.CompressorStreamFactory
 import org.apache.commons.compress.utils.IOUtils
 import java.io.*
 
@@ -27,23 +27,44 @@ object ArchiveUtils {
             "zip" -> compressZip(files, outputFile)
             "tar" -> compressTar(files, outputFile)
             "7z" -> compress7z(files, outputFile)
+            "gz", "gzip" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.GZIP)
+            "bz2", "bzip2" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.BZIP2)
+            "xz" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.XZ)
+            "lz4" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.LZ4_BLOCK)
+            "tar.gz" -> compressTarCompressed(files, outputFile, CompressorStreamFactory.GZIP)
+            "tar.xz" -> compressTarCompressed(files, outputFile, CompressorStreamFactory.XZ)
+            "tar.lz4" -> compressTarCompressed(files, outputFile, CompressorStreamFactory.LZ4_BLOCK)
             else -> throw IllegalArgumentException("Unsupported format: $format")
         }
     }
 
     private fun compressZip(files: List<File>, outputFile: File) {
         ZipArchiveOutputStream(FileOutputStream(outputFile)).use { out ->
-            files.forEach { file ->
-                addFileToArchive(out, file, "")
-            }
+            files.forEach { file -> addFileToArchive(out, file, "") }
         }
     }
 
     private fun compressTar(files: List<File>, outputFile: File) {
         TarArchiveOutputStream(FileOutputStream(outputFile)).use { out ->
             out.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
-            files.forEach { file ->
-                addFileToArchive(out, file, "")
+            files.forEach { file -> addFileToArchive(out, file, "") }
+        }
+    }
+
+    private fun compressTarCompressed(files: List<File>, outputFile: File, compressor: String) {
+        val fos = FileOutputStream(outputFile)
+        val cos = CompressorStreamFactory().createCompressorOutputStream(compressor, fos)
+        TarArchiveOutputStream(cos).use { out ->
+            out.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
+            files.forEach { file -> addFileToArchive(out, file, "") }
+        }
+    }
+
+    private fun compressStandalone(file: File, outputFile: File, compressor: String) {
+        val fos = FileOutputStream(outputFile)
+        CompressorStreamFactory().createCompressorOutputStream(compressor, fos).use { cos ->
+            FileInputStream(file).use { fis ->
+                IOUtils.copy(fis, cos)
             }
         }
     }
@@ -67,9 +88,7 @@ object ArchiveUtils {
 
     private fun compress7z(files: List<File>, outputFile: File) {
         SevenZOutputFile(outputFile).use { out ->
-            files.forEach { file ->
-                addFileTo7z(out, file, "")
-            }
+            files.forEach { file -> addFileTo7z(out, file, "") }
         }
     }
 
@@ -95,11 +114,19 @@ object ArchiveUtils {
     }
 
     fun listContents(archiveFile: File): List<ArchiveEntryInfo> {
-        val extension = archiveFile.extension.lowercase()
-        return if (extension == "7z") {
-            list7zContents(archiveFile)
-        } else {
-            listStandardArchiveContents(archiveFile, extension)
+        val name = archiveFile.name.lowercase()
+        return when {
+            name.endsWith(".7z") -> list7zContents(archiveFile)
+            name.endsWith(".zip") -> listStandardArchiveContents(archiveFile, "zip")
+            name.endsWith(".tar") -> listStandardArchiveContents(archiveFile, "tar")
+            name.endsWith(".tar.gz") || name.endsWith(".tgz") -> listTarCompressedContents(archiveFile, CompressorStreamFactory.GZIP)
+            name.endsWith(".tar.xz") -> listTarCompressedContents(archiveFile, CompressorStreamFactory.XZ)
+            name.endsWith(".tar.lz4") -> listTarCompressedContents(archiveFile, CompressorStreamFactory.LZ4_BLOCK)
+            // Standalone compressors don't have "entries", we treat them as a single file entry
+            name.endsWith(".gz") || name.endsWith(".bz2") || name.endsWith(".xz") || name.endsWith(".lz4") -> {
+                listOf(ArchiveEntryInfo(archiveFile.nameWithoutExtension, false, archiveFile.length(), archiveFile.lastModified()))
+            }
+            else -> emptyList()
         }
     }
 
@@ -120,12 +147,27 @@ object ArchiveUtils {
         return contents
     }
 
+    private fun listTarCompressedContents(file: File, compressor: String): List<ArchiveEntryInfo> {
+        val contents = mutableListOf<ArchiveEntryInfo>()
+        val fis = FileInputStream(file)
+        val bis = BufferedInputStream(fis)
+        val cos = CompressorStreamFactory().createCompressorInputStream(compressor, bis)
+        TarArchiveInputStream(cos).use { ais ->
+            var entry: ArchiveEntry? = ais.nextEntry
+            while (entry != null) {
+                contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, entry.lastModifiedDate?.time ?: 0))
+                entry = ais.nextEntry
+            }
+        }
+        return contents
+    }
+
     private fun list7zContents(file: File): List<ArchiveEntryInfo> {
         val contents = mutableListOf<ArchiveEntryInfo>()
         SevenZFile(file).use { szf ->
             var entry = szf.nextEntry
             while (entry != null) {
-                contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, 0L)) // Simplification for timestamp
+                contents.add(ArchiveEntryInfo(entry.name, entry.isDirectory, entry.size, 0L))
                 entry = szf.nextEntry
             }
         }
@@ -134,11 +176,18 @@ object ArchiveUtils {
 
     fun extract(archiveFile: File, outputDir: File, entryName: String? = null) {
         if (!outputDir.exists()) outputDir.mkdirs()
-        val extension = archiveFile.extension.lowercase()
-        if (extension == "7z") {
-            extract7z(archiveFile, outputDir, entryName)
-        } else {
-            extractStandard(archiveFile, outputDir, extension, entryName)
+        val name = archiveFile.name.lowercase()
+        when {
+            name.endsWith(".7z") -> extract7z(archiveFile, outputDir, entryName)
+            name.endsWith(".zip") -> extractStandard(archiveFile, outputDir, "zip", entryName)
+            name.endsWith(".tar") -> extractStandard(archiveFile, outputDir, "tar", entryName)
+            name.endsWith(".tar.gz") || name.endsWith(".tgz") -> extractTarCompressed(archiveFile, outputDir, CompressorStreamFactory.GZIP, entryName)
+            name.endsWith(".tar.xz") -> extractTarCompressed(archiveFile, outputDir, CompressorStreamFactory.XZ, entryName)
+            name.endsWith(".tar.lz4") -> extractTarCompressed(archiveFile, outputDir, CompressorStreamFactory.LZ4_BLOCK, entryName)
+            name.endsWith(".gz") -> extractStandalone(archiveFile, outputDir, CompressorStreamFactory.GZIP)
+            name.endsWith(".bz2") -> extractStandalone(archiveFile, outputDir, CompressorStreamFactory.BZIP2)
+            name.endsWith(".xz") -> extractStandalone(archiveFile, outputDir, CompressorStreamFactory.XZ)
+            name.endsWith(".lz4") -> extractStandalone(archiveFile, outputDir, CompressorStreamFactory.LZ4_BLOCK)
         }
     }
 
@@ -148,30 +197,49 @@ object ArchiveUtils {
             "tar" -> TarArchiveInputStream(FileInputStream(file))
             else -> return
         }
-        inputStream.use { ais ->
-            var entry = ais.nextEntry
+        processArchiveInputStream(inputStream, outputDir, targetEntry)
+    }
+
+    private fun extractTarCompressed(file: File, outputDir: File, compressor: String, targetEntry: String?) {
+        val fis = FileInputStream(file)
+        val bis = BufferedInputStream(fis)
+        val cos = CompressorStreamFactory().createCompressorInputStream(compressor, bis)
+        val ais = TarArchiveInputStream(cos)
+        processArchiveInputStream(ais, outputDir, targetEntry)
+    }
+
+    private fun processArchiveInputStream(ais: ArchiveInputStream<*>, outputDir: File, targetEntry: String?) {
+        ais.use { stream ->
+            var entry: ArchiveEntry? = stream.nextEntry
             while (entry != null) {
                 if (targetEntry == null || entry.name == targetEntry || entry.name.startsWith("$targetEntry/")) {
-                    val entryRelativeName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
+                    val relName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
                         entry.name.substringAfter("$targetEntry/")
                     } else if (targetEntry != null) {
                         File(entry.name).name
                     } else {
                         entry.name
                     }
-
-                    val outFile = File(outputDir, entryRelativeName)
+                    val outFile = File(outputDir, relName)
                     if (entry.isDirectory) {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { out ->
-                            IOUtils.copy(ais, out)
-                        }
+                        FileOutputStream(outFile).use { out -> IOUtils.copy(stream, out) }
                     }
-                    if (targetEntry != null && entry.name == targetEntry && !entry.isDirectory) break
                 }
-                entry = ais.nextEntry
+                entry = stream.nextEntry
+            }
+        }
+    }
+
+    private fun extractStandalone(file: File, outputDir: File, compressor: String) {
+        val fis = FileInputStream(file)
+        val bis = BufferedInputStream(fis)
+        CompressorStreamFactory().createCompressorInputStream(compressor, bis).use { cis ->
+            val outFile = File(outputDir, file.nameWithoutExtension)
+            FileOutputStream(outFile).use { fos ->
+                IOUtils.copy(cis, fos)
             }
         }
     }
@@ -181,15 +249,14 @@ object ArchiveUtils {
             var entry = szf.nextEntry
             while (entry != null) {
                 if (targetEntry == null || entry.name == targetEntry || entry.name.startsWith("$targetEntry/")) {
-                    val entryRelativeName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
+                    val relName = if (targetEntry != null && entry.name.startsWith("$targetEntry/")) {
                         entry.name.substringAfter("$targetEntry/")
                     } else if (targetEntry != null) {
                         File(entry.name).name
                     } else {
                         entry.name
                     }
-
-                    val outFile = File(outputDir, entryRelativeName)
+                    val outFile = File(outputDir, relName)
                     if (entry.isDirectory) {
                         outFile.mkdirs()
                     } else {
@@ -202,7 +269,6 @@ object ArchiveUtils {
                             }
                         }
                     }
-                    if (targetEntry != null && entry.name == targetEntry && !entry.isDirectory) break
                 }
                 entry = szf.nextEntry
             }
