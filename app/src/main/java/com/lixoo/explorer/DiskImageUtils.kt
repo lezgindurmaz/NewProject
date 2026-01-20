@@ -31,12 +31,17 @@ object DiskImageUtils {
         private var virtualPos: Long = 0
         private val l2Cache = mutableMapOf<Long, LongArray>()
 
+        // Cache for the last read cluster to speed up consecutive small reads
+        private var cachedClusterPos: Long = -1
+        private val clusterBuffer: ByteArray
+
         init {
             raf.seek(0)
             val header = ByteArray(72)
             raf.read(header)
             clusterBits = getIntBE(header, 20)
             clusterSize = 1 shl clusterBits
+            clusterBuffer = ByteArray(clusterSize)
             l1Size = getIntBE(header, 36)
             l1TableOffset = getLongBE(header, 40)
 
@@ -45,7 +50,7 @@ object DiskImageUtils {
             val l1Buf = ByteArray(l1Size * 8)
             raf.read(l1Buf)
             for (i in 0 until l1Size) {
-                l1Table[i] = getLongBE(l1Buf, i * 8) and 0x00fffffffffff000L
+                l1Table[i] = getLongBE(l1Buf, i * 8) and 0x3ffffffffffff000L
             }
         }
 
@@ -65,16 +70,24 @@ object DiskImageUtils {
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             var totalRead = 0
             while (totalRead < len) {
-                val clusterOffset = virtualPos % clusterSize
-                val toRead = Math.min(len - totalRead, clusterSize - clusterOffset.toInt())
-                val phys = getPhysicalOffset(virtualPos)
+                val clusterBase = (virtualPos / clusterSize) * clusterSize
+                val clusterOffset = (virtualPos % clusterSize).toInt()
+                val toRead = Math.min(len - totalRead, clusterSize - clusterOffset)
 
-                if (phys == 0L) {
-                    for (i in 0 until toRead) b[off + totalRead + i] = 0
-                } else {
-                    raf.seek(phys + clusterOffset)
-                    raf.read(b, off + totalRead, toRead)
+                if (cachedClusterPos != clusterBase) {
+                    val phys = getPhysicalOffset(virtualPos)
+                    if (phys == 0L) {
+                        for (i in clusterBuffer.indices) clusterBuffer[i] = 0
+                    } else if (phys == -1L) { // All zeros bit
+                        for (i in clusterBuffer.indices) clusterBuffer[i] = 0
+                    } else {
+                        raf.seek(phys)
+                        raf.read(clusterBuffer)
+                    }
+                    cachedClusterPos = clusterBase
                 }
+
+                System.arraycopy(clusterBuffer, clusterOffset, b, off + totalRead, toRead)
 
                 virtualPos += toRead
                 totalRead += toRead
@@ -84,23 +97,26 @@ object DiskImageUtils {
 
         private fun getPhysicalOffset(vPos: Long): Long {
             val l2Entries = clusterSize / 8
-            val l2Index = (vPos / clusterSize) % l2Entries
-            val l1Index = (vPos / clusterSize) / l2Entries
+            val clusterIdx = vPos / clusterSize
+            val l2Index = (clusterIdx % l2Entries).toInt()
+            val l1Index = (clusterIdx / l2Entries).toInt()
 
-            if (l1Index >= l1Table.size || l1Table[l1Index.toInt()] == 0L) return 0
+            if (l1Index >= l1Table.size || l1Table[l1Index] == 0L) return 0
 
-            val l2TablePos = l1Table[l1Index.toInt()]
+            val l2TablePos = l1Table[l1Index]
             val l2Table = l2Cache.getOrPut(l2TablePos) {
                 val table = LongArray(l2Entries)
                 val buf = ByteArray(clusterSize)
                 raf.seek(l2TablePos)
                 raf.read(buf)
                 for (i in 0 until l2Entries) {
-                    table[i] = getLongBE(buf, i * 8) and 0x00fffffffffff000L
+                    table[i] = getLongBE(buf, i * 8)
                 }
                 table
             }
-            return l2Table[l2Index.toInt()]
+            val entry = l2Table[l2Index]
+            if ((entry and (1L shl 62)) != 0L) return -1L // All zeros
+            return entry and 0x3ffffffffffff000L
         }
 
         override fun close() = raf.close()
@@ -181,7 +197,7 @@ object DiskImageUtils {
             val fatType = if (totalClusters < 4085) 12 else if (totalClusters < 65525) 16 else 32
 
             if (rootEntries > 0) {
-                parseFatDirectory(disk, rootDirStart, rootEntries, "", items, fatStart, dataStart, sectorsPerCluster, bytesPerSector, fatType)
+                parseFatDirectory(disk, rootDirStart, 0, rootEntries, "", items, fatStart, dataStart, sectorsPerCluster, bytesPerSector, fatType)
             } else {
                 val rootCluster = getIntLE(bpb, 44)
                 parseFat32Directory(disk, rootCluster, fatStart, dataStart, sectorsPerCluster, bytesPerSector, "", items, fatType)
@@ -190,41 +206,94 @@ object DiskImageUtils {
         return items
     }
 
-    private fun parseFatDirectory(disk: VirtualDisk, offset: Long, entries: Int, path: String, items: MutableList<ArchiveUtils.ArchiveEntryInfo>,
-                                  fatStart: Long = 0, dataStart: Long = 0, spc: Int = 0, bps: Int = 0, fatType: Int = 0) {
+    private fun parseFatDirectory(disk: VirtualDisk, offset: Long, startCluster: Int, entries: Int, path: String, items: MutableList<ArchiveUtils.ArchiveEntryInfo>,
+                                  fatStart: Long, dataStart: Long, spc: Int, bps: Int, fatType: Int) {
         if (items.size > 10000) return
-        disk.seek(offset)
-        for (i in 0 until entries) {
-            val entry = ByteArray(32)
-            if (disk.read(entry, 0, 32) < 32) break
-            if (entry[0] == 0x00.toByte()) break
-            if (entry[0] == 0xE5.toByte().toByte()) continue
 
-            val attr = entry[11].toInt() and 0xFF
-            if (attr == 0x0F || (attr and 0x08) != 0) continue
-
-            val name = getFatName(entry)
-            val isDir = (attr and 0x10) != 0
-            val size = if (isDir) 0L else getIntLE(entry, 28).toLong()
-            val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
-
-            if (name != "." && name != "..") {
-                val fullPath = if (path.isEmpty()) name else "$path/$name"
-                items.add(ArchiveUtils.ArchiveEntryInfo(fullPath, isDir, size, 0))
-
-                if (isDir && cluster >= 2 && spc > 0) {
-                    val savedPos = offset + (i + 1) * 32
-                    val dirOffset = dataStart + (cluster - 2).toLong() * spc * bps
-                    parseFatDirectory(disk, dirOffset, (spc * bps) / 32, fullPath, items, fatStart, dataStart, spc, bps, fatType)
-                    disk.seek(savedPos)
+        if (entries > 0) {
+            // Fixed size directory (FAT12/16 root)
+            disk.seek(offset)
+            for (i in 0 until entries) {
+                val entry = ByteArray(32)
+                if (disk.read(entry, 0, 32) < 32) break
+                processFatEntry(disk, entry, path, items, fatStart, dataStart, spc, bps, fatType)
+            }
+        } else {
+            // Cluster-chain directory
+            var currentCluster = startCluster
+            val clusterSize = spc * bps
+            val buf = ByteArray(32)
+            while (currentCluster >= 2) {
+                val clusterOffset = dataStart + (currentCluster - 2).toLong() * clusterSize
+                disk.seek(clusterOffset)
+                for (i in 0 until (clusterSize / 32)) {
+                    if (disk.read(buf, 0, 32) < 32) break
+                    if (!processFatEntry(disk, buf, path, items, fatStart, dataStart, spc, bps, fatType)) return
                 }
+                currentCluster = getNextCluster(disk, currentCluster, fatStart, fatType)
+                if (isEndOfChain(currentCluster, fatType)) break
             }
         }
     }
 
+    private fun processFatEntry(disk: VirtualDisk, entry: ByteArray, path: String, items: MutableList<ArchiveUtils.ArchiveEntryInfo>,
+                                fatStart: Long, dataStart: Long, spc: Int, bps: Int, fatType: Int): Boolean {
+        if (entry[0] == 0x00.toByte()) return false
+        if (entry[0] == 0xE5.toByte()) return true
+
+        val attr = entry[11].toInt() and 0xFF
+        if (attr == 0x0F || (attr and 0x08) != 0) return true
+
+        val name = getFatName(entry)
+        val isDir = (attr and 0x10) != 0
+        val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
+        val size = if (isDir) 0L else getIntLE(entry, 28).toLong()
+
+        if (name != "." && name != "..") {
+            val fullPath = if (path.isEmpty()) name else "$path/$name"
+            items.add(ArchiveUtils.ArchiveEntryInfo(fullPath, isDir, size, 0))
+            if (isDir && cluster >= 2) {
+                val savedPos = disk.length() // We don't really use this, but we need to restore seek
+                // To avoid deep recursion issues and since listDiskContents is flat anyway:
+                parseFatDirectory(disk, 0, cluster, 0, fullPath, items, fatStart, dataStart, spc, bps, fatType)
+            }
+        }
+        return true
+    }
+
+    private fun getNextCluster(disk: VirtualDisk, cluster: Int, fatStart: Long, fatType: Int): Int {
+        val oldPos = disk.length() // Dummy
+        disk.seek(fatStart + when(fatType) {
+            12 -> (cluster * 3) / 2L
+            32 -> cluster * 4L
+            else -> cluster * 2L
+        })
+        val next = when(fatType) {
+            12 -> {
+                val b1 = disk.read() and 0xFF
+                val b2 = disk.read() and 0xFF
+                if (cluster % 2 == 0) (b1 or ((b2 and 0x0F) shl 8)) else ((b1 shr 4) or (b2 shl 4))
+            }
+            32 -> {
+                val b = ByteArray(4)
+                disk.read(b, 0, 4)
+                getIntLE(b, 0) and 0x0FFFFFFF
+            }
+            else -> (disk.read() and 0xFF) or ((disk.read() and 0xFF) shl 8)
+        }
+        return next
+    }
+
+    private fun isEndOfChain(cluster: Int, fatType: Int): Boolean {
+        return when(fatType) {
+            12 -> cluster >= 0x0FF8
+            16 -> cluster >= 0xFFF8
+            else -> cluster >= 0x0FFFFFF8
+        }
+    }
+
     private fun parseFat32Directory(disk: VirtualDisk, cluster: Int, fatStart: Long, dataStart: Long, spc: Int, bps: Int, path: String, items: MutableList<ArchiveUtils.ArchiveEntryInfo>, fatType: Int) {
-        val offset = dataStart + (cluster - 2).toLong() * spc * bps
-        parseFatDirectory(disk, offset, (spc * bps) / 32, path, items, fatStart, dataStart, spc, bps, fatType)
+        parseFatDirectory(disk, 0, cluster, 0, path, items, fatStart, dataStart, spc, bps, fatType)
     }
 
     private fun getFatName(entry: ByteArray): String {
@@ -341,77 +410,117 @@ object DiskImageUtils {
             val fatType = if (totalClusters < 4085) 12 else if (totalClusters < 65525) 16 else 32
 
             if (entryName == null) {
-                extractFatDirectory(disk, rootDirStart, rootEntries, fatStart, dataStart, sectorsPerCluster, bytesPerSector, outputDir, fatType)
+                if (rootEntries > 0) extractFatDirectory(disk, rootDirStart, 0, rootEntries, fatStart, dataStart, sectorsPerCluster, bytesPerSector, outputDir, fatType)
+                else {
+                    val rootCluster = getIntLE(bpb, 44)
+                    extractFatDirectory(disk, 0, rootCluster, 0, fatStart, dataStart, sectorsPerCluster, bytesPerSector, outputDir, fatType)
+                }
             } else {
-                findAndExtractFatEntry(disk, rootDirStart, rootEntries, fatStart, dataStart, sectorsPerCluster, bytesPerSector, entryName, outputDir, fatType)
+                if (rootEntries > 0) findAndExtractFatEntry(disk, rootDirStart, 0, rootEntries, fatStart, dataStart, sectorsPerCluster, bytesPerSector, entryName, outputDir, fatType)
+                else {
+                    val rootCluster = getIntLE(bpb, 44)
+                    findAndExtractFatEntry(disk, 0, rootCluster, 0, fatStart, dataStart, sectorsPerCluster, bytesPerSector, entryName, outputDir, fatType)
+                }
             }
         } finally { disk.close() }
     }
 
-    private fun extractFatDirectory(disk: VirtualDisk, offset: Long, entries: Int, fatStart: Long, dataStart: Long, spc: Int, bps: Int, outDir: File, fatType: Int) {
-        disk.seek(offset)
-        for (i in 0 until entries) {
-            val entry = ByteArray(32)
-            if (disk.read(entry, 0, 32) < 32) break
-            if (entry[0] == 0x00.toByte()) break
-            if (entry[0] == 0xE5.toByte().toByte()) continue
-            val attr = entry[11].toInt() and 0xFF
-            if (attr == 0x0F || (attr and 0x08) != 0) continue
-
-            val name = getFatName(entry)
-            val isDir = (attr and 0x10) != 0
-            val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
-
-            if (name != "." && name != "..") {
-                if (isDir) {
-                    val subDir = File(outDir, name)
-                    subDir.mkdirs()
-                    if (cluster >= 2) {
-                        val savedPos = offset + (i + 1) * 32
-                        val dirOffset = dataStart + (cluster - 2).toLong() * spc * bps
-                        extractFatDirectory(disk, dirOffset, (spc * bps) / 32, fatStart, dataStart, spc, bps, subDir, fatType)
-                        disk.seek(savedPos)
-                    }
-                } else {
-                    val size = getIntLE(entry, 28).toLong()
-                    val outFile = File(outDir, name)
-                    extractFatFile(disk, cluster, size, fatStart, dataStart, spc, bps, outFile, fatType)
-                    disk.seek(offset + (i + 1) * 32)
+    private fun extractFatDirectory(disk: VirtualDisk, offset: Long, startCluster: Int, entries: Int, fatStart: Long, dataStart: Long, spc: Int, bps: Int, outDir: File, fatType: Int) {
+        if (entries > 0) {
+            disk.seek(offset)
+            for (i in 0 until entries) {
+                val entry = ByteArray(32)
+                if (disk.read(entry, 0, 32) < 32) break
+                processExtractFatEntry(disk, entry, fatStart, dataStart, spc, bps, outDir, fatType)
+            }
+        } else {
+            var currentCluster = startCluster
+            val clusterSize = spc * bps
+            val buf = ByteArray(32)
+            while (currentCluster >= 2) {
+                disk.seek(dataStart + (currentCluster - 2).toLong() * clusterSize)
+                for (i in 0 until (clusterSize / 32)) {
+                    if (disk.read(buf, 0, 32) < 32) break
+                    if (!processExtractFatEntry(disk, buf, fatStart, dataStart, spc, bps, outDir, fatType)) return
                 }
+                currentCluster = getNextCluster(disk, currentCluster, fatStart, fatType)
+                if (isEndOfChain(currentCluster, fatType)) break
             }
         }
     }
 
-    private fun findAndExtractFatEntry(disk: VirtualDisk, offset: Long, entries: Int, fatStart: Long, dataStart: Long, spc: Int, bps: Int, target: String, outDir: File, fatType: Int) {
-        disk.seek(offset)
-        for (i in 0 until entries) {
-            val entry = ByteArray(32)
-            if (disk.read(entry, 0, 32) < 32) break
-            if (entry[0] == 0x00.toByte()) break
-            if (entry[0] == 0xE5.toByte().toByte()) continue
+    private fun processExtractFatEntry(disk: VirtualDisk, entry: ByteArray, fatStart: Long, dataStart: Long, spc: Int, bps: Int, outDir: File, fatType: Int): Boolean {
+        if (entry[0] == 0x00.toByte()) return false
+        if (entry[0] == 0xE5.toByte()) return true
+        val attr = entry[11].toInt() and 0xFF
+        if (attr == 0x0F || (attr and 0x08) != 0) return true
 
-            val name = getFatName(entry)
-            val attr = entry[11].toInt() and 0xFF
-            val isDir = (attr and 0x10) != 0
-            val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
+        val name = getFatName(entry)
+        val isDir = (attr and 0x10) != 0
+        val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
 
-            val currentPath = if (target.contains("/")) target.substringBefore("/") else target
-
-            if (name == currentPath) {
-                if (isDir) {
-                    val remainingPath = target.substringAfter("/", "")
-                    if (remainingPath.isEmpty()) {
-                        extractFatDirectory(disk, dataStart + (cluster - 2).toLong() * spc * bps, (spc * bps) / 32, fatStart, dataStart, spc, bps, File(outDir, name), fatType)
-                    } else {
-                        findAndExtractFatEntry(disk, dataStart + (cluster - 2).toLong() * spc * bps, (spc * bps) / 32, fatStart, dataStart, spc, bps, remainingPath, File(outDir, name), fatType)
-                    }
-                } else {
-                    val size = getIntLE(entry, 28).toLong()
-                    extractFatFile(disk, cluster, size, fatStart, dataStart, spc, bps, File(outDir, name), fatType)
-                }
-                return
+        if (name != "." && name != "..") {
+            if (isDir) {
+                val subDir = File(outDir, name)
+                subDir.mkdirs()
+                if (cluster >= 2) extractFatDirectory(disk, 0, cluster, 0, fatStart, dataStart, spc, bps, subDir, fatType)
+            } else {
+                val size = getIntLE(entry, 28).toLong()
+                extractFatFile(disk, cluster, size, fatStart, dataStart, spc, bps, File(outDir, name), fatType)
             }
         }
+        return true
+    }
+
+    private fun findAndExtractFatEntry(disk: VirtualDisk, offset: Long, startCluster: Int, entries: Int, fatStart: Long, dataStart: Long, spc: Int, bps: Int, target: String, outDir: File, fatType: Int) {
+        if (entries > 0) {
+            disk.seek(offset)
+            for (i in 0 until entries) {
+                val entry = ByteArray(32)
+                if (disk.read(entry, 0, 32) < 32) break
+                if (processFindExtractEntry(disk, entry, fatStart, dataStart, spc, bps, target, outDir, fatType)) return
+            }
+        } else {
+            var currentCluster = startCluster
+            val clusterSize = spc * bps
+            val buf = ByteArray(32)
+            while (currentCluster >= 2) {
+                disk.seek(dataStart + (currentCluster - 2).toLong() * clusterSize)
+                for (i in 0 until (clusterSize / 32)) {
+                    if (disk.read(buf, 0, 32) < 32) break
+                    if (processFindExtractEntry(disk, buf, fatStart, dataStart, spc, bps, target, outDir, fatType)) return
+                }
+                currentCluster = getNextCluster(disk, currentCluster, fatStart, fatType)
+                if (isEndOfChain(currentCluster, fatType)) break
+            }
+        }
+    }
+
+    private fun processFindExtractEntry(disk: VirtualDisk, entry: ByteArray, fatStart: Long, dataStart: Long, spc: Int, bps: Int, target: String, outDir: File, fatType: Int): Boolean {
+        if (entry[0] == 0x00.toByte()) return true // Stop searching in this cluster
+        if (entry[0] == 0xE5.toByte()) return false
+
+        val name = getFatName(entry)
+        val attr = entry[11].toInt() and 0xFF
+        val isDir = (attr and 0x10) != 0
+        val cluster = if (fatType == 32) (getShortLE(entry, 26).toInt() and 0xFFFF) or ((getShortLE(entry, 20).toInt() and 0xFFFF) shl 16) else getShortLE(entry, 26).toInt() and 0xFFFF
+
+        val currentPath = if (target.contains("/")) target.substringBefore("/") else target
+        if (name == currentPath) {
+            if (isDir) {
+                val remainingPath = target.substringAfter("/", "")
+                if (remainingPath.isEmpty()) {
+                    extractFatDirectory(disk, 0, cluster, 0, fatStart, dataStart, spc, bps, File(outDir, name), fatType)
+                } else {
+                    findAndExtractFatEntry(disk, 0, cluster, 0, fatStart, dataStart, spc, bps, remainingPath, File(outDir, name), fatType)
+                }
+            } else {
+                val size = getIntLE(entry, 28).toLong()
+                extractFatFile(disk, cluster, size, fatStart, dataStart, spc, bps, File(outDir, name), fatType)
+            }
+            return true
+        }
+        return false
     }
 
     private fun extractFatFile(disk: VirtualDisk, firstCluster: Int, size: Long, fatStart: Long, dataStart: Long, spc: Int, bps: Int, outFile: File, fatType: Int) {
