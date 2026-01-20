@@ -794,7 +794,7 @@ fun FileExplorerScreen(
 
                     Text("Format:", fontWeight = FontWeight.Bold)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                        listOf("iso", "img").forEach { f ->
+                        listOf("iso", "img", "qcow2").forEach { f ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(4.dp)) {
                                 RadioButton(selected = selectedFormat == f, onClick = { selectedFormat = f })
                                 Text(f.uppercase())
@@ -821,7 +821,7 @@ fun FileExplorerScreen(
                                 }
                             }
                         }
-                    } else if (selectedFormat == "img") {
+                    } else if (selectedFormat == "img" || selectedFormat == "qcow2") {
                         Text("Disk Boyutu (MB):", fontWeight = FontWeight.Bold)
                         TextField(
                             value = imgSize,

@@ -77,6 +77,7 @@ object ArchiveUtils {
         when (format.lowercase()) {
             "iso" -> DiskImageUtils.createIso(files, outputFile, label)
             "img" -> DiskImageUtils.createImg(outputFile, sizeMB, label)
+            "qcow2" -> DiskImageUtils.createQcow2(outputFile, sizeMB, label)
             else -> compressZip(files, outputFile)
         }
     }
