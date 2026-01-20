@@ -254,15 +254,26 @@ object DiskImageUtils {
             val label = volumeLabel.uppercase().padEnd(32)
             System.arraycopy(label.toByteArray(), 0, pvd, 40, 32)
 
-            // Temporary values for Extents - we will update these later
-            // Root Directory at sector 19, Path Table at sector 18
-            putIntBoth(pvd, 80, 0) // Volume Space Size (updated later)
-            putIntBoth(pvd, 132, 1) // Volume Set Size
-            putIntBoth(pvd, 136, 1) // Volume Sequence Number
-            putIntBoth(pvd, 140, 2048) // Logical Block Size
+            // Volume Space Size (updated later) at offset 80
+            putIntBoth(pvd, 80, 0)
 
-            // Root Directory Record in PVD
-            val rootRecord = createDirectoryRecord("", 19, 2048, true)
+            // Volume Set Size (1) at offset 120
+            putIntBoth(pvd, 120, 1)
+            // Volume Sequence Number (1) at offset 124
+            putIntBoth(pvd, 124, 1)
+            // Logical Block Size (2048) at offset 128
+            putIntBoth(pvd, 128, 2048)
+
+            // Path Table Size at offset 132
+            putIntBoth(pvd, 132, 10)
+
+            // L-type Path Table Location at offset 140 (Sector 18)
+            putIntLE(pvd, 140, 18)
+            // M-type Path Table Location at offset 148 (Sector 19)
+            putIntBE(pvd, 148, 19)
+
+            // Root Directory Record in PVD (Sector 20)
+            val rootRecord = createDirectoryRecord("", 20, 2048, true)
             System.arraycopy(rootRecord, 0, pvd, 156, 34)
 
             raf.write(pvd)
@@ -275,37 +286,48 @@ object DiskImageUtils {
             raf.write(terminator)
 
             // 4. Path Table Placeholder - Sector 18 (Simplified: just root)
-            val pathTable = ByteArray(2048)
-            pathTable[0] = 0x01 // Root name length
-            putIntLE(pathTable, 2, 19) // Extent of Root
-            raf.write(pathTable)
+            val lPathTable = ByteArray(2048)
+            lPathTable[0] = 0x01 // Root name length
+            lPathTable[1] = 0x00 // ExtAttr len
+            putIntLE(lPathTable, 2, 20) // Extent of Root (Sector 20)
+            putShortLE(lPathTable, 6, 1) // Parent dir (root is 1)
+            lPathTable[8] = 0x00 // Root name
+            raf.write(lPathTable)
 
-            // 5. Root Directory Contents - Sector 19
+            // 5. M-type Path Table (BE) - Sector 19
+            val mPathTable = ByteArray(2048)
+            mPathTable[0] = 0x01
+            mPathTable[1] = 0x00
+            putIntBE(mPathTable, 2, 20)
+            putShortBE(mPathTable, 6, 1)
+            mPathTable[8] = 0x00
+            raf.write(mPathTable)
+
+            // 6. Root Directory Contents - Sector 20
             // First two entries are . and ..
             val currentSector = ByteArray(2048)
             var pos = 0
 
-            val dot = createDirectoryRecord("\u0000", 19, 2048, true)
+            val dot = createDirectoryRecord("\u0000", 20, 2048, true)
             System.arraycopy(dot, 0, currentSector, pos, dot.size)
             pos += dot.size
 
-            val dotdot = createDirectoryRecord("\u0001", 19, 2048, true)
+            val dotdot = createDirectoryRecord("\u0001", 20, 2048, true)
             System.arraycopy(dotdot, 0, currentSector, pos, dotdot.size)
             pos += dotdot.size
 
-            // 6. Add Files
-            var nextDataSector = 20L // Starting after Root Directory
-            val fileRecords = mutableListOf<Triple<File, Long, Int>>() // File, StartSector, RecordPos
+            // 7. Add Files
+            var nextDataSector = 21L // Starting after Root Directory
+            val fileRecords = mutableListOf<Triple<File, Long, Int>>() // File, StartSector, Size
 
             for (file in files) {
                 if (file.isDirectory) continue // Simplified: flat files only for now
-                val name = file.name.uppercase().replace("[^A-Z0-0_]".toRegex(), "_").take(12)
+                val name = file.name.uppercase().replace("[^A-Z0-9_]".toRegex(), "_").take(12)
                 val size = file.length().toInt()
                 val extent = nextDataSector.toInt()
 
                 val record = createDirectoryRecord(name, extent, size, false)
                 if (pos + record.size > 2048) {
-                    // Start next sector for directory (rare for few files)
                     break
                 }
                 System.arraycopy(record, 0, currentSector, pos, record.size)
@@ -315,8 +337,8 @@ object DiskImageUtils {
             }
             raf.write(currentSector)
 
-            // 7. Write File Data
-            raf.seek(20 * 2048)
+            // 8. Write File Data
+            raf.seek(21 * 2048)
             for (record in fileRecords) {
                 val file = record.first
                 java.io.FileInputStream(file).use { fis ->
@@ -338,24 +360,44 @@ object DiskImageUtils {
             raf.seek(32768 + 80)
             putIntBothRAF(raf, totalSectors.toInt())
 
+            // Pad to multiple of 2048
+            raf.setLength(totalSectors * 2048)
+
         } finally { raf.close() }
     }
 
     private fun createDirectoryRecord(name: String, extent: Int, size: Int, isDir: Boolean): ByteArray {
         val nameBytes = name.toByteArray(Charset.forName("ASCII"))
         val nameLen = nameBytes.size
-        val recordLen = 33 + nameLen + (if (nameLen % 2 == 0) 1 else 0)
-        val record = ByteArray(recordLen)
+        var recordLen = 33 + nameLen
+        if (recordLen % 2 != 0) recordLen++
 
+        val record = ByteArray(recordLen)
         record[0] = recordLen.toByte()
         putIntBoth(record, 2, extent)
         putIntBoth(record, 10, size)
-        // Date (simplfied: zeroes)
+
+        // Date (simplified: 2024-01-01)
+        record[18] = 124.toByte() // 2024 - 1900
+        record[19] = 1
+        record[20] = 1
+
         if (isDir) record[25] = 0x02
+
+        // Volume Sequence Number (Both Endian 16-bit)
+        putShortBoth(record, 28, 1)
+
         record[32] = nameLen.toByte()
         System.arraycopy(nameBytes, 0, record, 33, nameLen)
 
         return record
+    }
+
+    private fun putShortBoth(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = (value and 0xFF).toByte()
+        data[offset + 1] = ((value shr 8) and 0xFF).toByte()
+        data[offset + 2] = ((value shr 8) and 0xFF).toByte()
+        data[offset + 3] = (value and 0xFF).toByte()
     }
 
     private fun putIntBoth(data: ByteArray, offset: Int, value: Int) {
@@ -382,5 +424,22 @@ object DiskImageUtils {
         data[offset + 1] = ((value shr 8) and 0xFF).toByte()
         data[offset + 2] = ((value shr 16) and 0xFF).toByte()
         data[offset + 3] = ((value shr 24) and 0xFF).toByte()
+    }
+
+    private fun putShortLE(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = (value and 0xFF).toByte()
+        data[offset + 1] = ((value shr 8) and 0xFF).toByte()
+    }
+
+    private fun putShortBE(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = ((value shr 8) and 0xFF).toByte()
+        data[offset + 1] = (value and 0xFF).toByte()
+    }
+
+    private fun putIntBE(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = ((value shr 24) and 0xFF).toByte()
+        data[offset + 1] = ((value shr 16) and 0xFF).toByte()
+        data[offset + 2] = ((value shr 8) and 0xFF).toByte()
+        data[offset + 3] = (value and 0xFF).toByte()
     }
 }
