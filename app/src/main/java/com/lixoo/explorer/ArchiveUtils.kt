@@ -15,6 +15,8 @@ import java.io.*
 
 object ArchiveUtils {
 
+    private val archiveCache = mutableMapOf<String, List<ArchiveEntryInfo>>()
+
     data class ArchiveEntryInfo(
         val name: String,
         val isDirectory: Boolean,
@@ -114,8 +116,13 @@ object ArchiveUtils {
     }
 
     fun listContents(archiveFile: File): List<ArchiveEntryInfo> {
+        val path = archiveFile.absolutePath
+        if (archiveCache.containsKey(path)) {
+            return archiveCache[path]!!
+        }
+
         val name = archiveFile.name.lowercase()
-        return when {
+        val result = when {
             name.endsWith(".7z") -> list7zContents(archiveFile)
             name.endsWith(".zip") -> listStandardArchiveContents(archiveFile, "zip")
             name.endsWith(".tar") -> listStandardArchiveContents(archiveFile, "tar")
@@ -128,14 +135,29 @@ object ArchiveUtils {
             }
             else -> emptyList()
         }
+
+        if (result.isNotEmpty()) {
+            archiveCache[path] = result
+        }
+        return result
+    }
+
+    fun clearCache() {
+        archiveCache.clear()
+    }
+
+    fun isCached(file: File): Boolean {
+        return archiveCache.containsKey(file.absolutePath)
     }
 
     private fun listStandardArchiveContents(file: File, format: String): List<ArchiveEntryInfo> {
         val contents = mutableListOf<ArchiveEntryInfo>()
+        val fis = FileInputStream(file)
+        val bis = BufferedInputStream(fis)
         val inputStream = when (format) {
-            "zip" -> ZipArchiveInputStream(FileInputStream(file))
-            "tar" -> TarArchiveInputStream(FileInputStream(file))
-            else -> return emptyList()
+            "zip" -> ZipArchiveInputStream(bis)
+            "tar" -> TarArchiveInputStream(bis)
+            else -> { bis.close(); return emptyList() }
         }
         inputStream.use { ais ->
             var entry: ArchiveEntry? = ais.nextEntry
@@ -225,7 +247,7 @@ object ArchiveUtils {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { out -> IOUtils.copy(stream, out) }
+                        BufferedOutputStream(FileOutputStream(outFile)).use { out -> IOUtils.copy(stream, out) }
                     }
                 }
                 entry = stream.nextEntry
@@ -261,7 +283,7 @@ object ArchiveUtils {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { out ->
+                        BufferedOutputStream(FileOutputStream(outFile)).use { out ->
                             val buffer = ByteArray(8192)
                             var len: Int
                             while (szf.read(buffer).also { len = it } != -1) {

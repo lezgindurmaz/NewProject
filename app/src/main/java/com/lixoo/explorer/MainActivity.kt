@@ -401,7 +401,7 @@ class MainActivity : ComponentActivity() {
 
         val normalFiles = file.listFiles()
         if (normalFiles != null) {
-            normalFiles.forEach {
+            normalFiles.asSequence().forEach {
                 if (showHiddenFiles || !it.name.startsWith(".")) {
                     val ext = it.extension.lowercase()
                     val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2")
@@ -433,8 +433,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadArchiveFiles(): List<FileItem> {
-        loadingMessage = "Dosya açılıyor..."
         val archiveFile = File(currentArchivePath)
+        if (!ArchiveUtils.isCached(archiveFile)) {
+            loadingMessage = "Dosya açılıyor..."
+        }
         val entries = try { ArchiveUtils.listContents(archiveFile) } catch (e: Exception) { emptyList() }
         val items = mutableListOf<FileItem>()
         val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
@@ -796,6 +798,7 @@ fun SoundPlayerScreen(file: File, onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(isDarkMode: Boolean, onDarkModeChange: (Boolean) -> Unit, showHiddenFiles: Boolean, onHiddenFilesChange: (Boolean) -> Unit, primaryColor: Color, onPrimaryColorChange: (Color) -> Unit, onBack: () -> Unit) {
+        val context = androidx.compose.ui.platform.LocalContext.current
     Scaffold(topBar = { TopAppBar(title = { Text("Ayarlar") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } }) }) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp)) {
             SettingsToggle("Karanlık Mod", isDarkMode, onDarkModeChange)
@@ -807,6 +810,18 @@ fun SettingsScreen(isDarkMode: Boolean, onDarkModeChange: (Boolean) -> Unit, sho
                     Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(color).clickable { onPrimaryColorChange(color) }) { if (primaryColor == color) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.align(Alignment.Center)) }
                 }
             }
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/lezgindurmaz/NewProject/releases"))
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Update, null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Güncellemeleri Kontrol Et")
+                }
         }
     }
 }
