@@ -95,6 +95,10 @@ class MainActivity : ComponentActivity() {
     private var loadingMessage by mutableStateOf<String?>(null)
     private var refreshJob: kotlinx.coroutines.Job? = null
 
+    // Search State
+    private var searchQuery by mutableStateOf("")
+    private var isSearchActive by mutableStateOf(false)
+
     private lateinit var prefs: SharedPreferences
 
     data class FileItem(
@@ -192,7 +196,14 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onRequestDataPermission = { requestDataPermission() },
                                         clipboardFiles = clipboardFiles,
-                                        isCutMode = isCutMode
+                                        isCutMode = isCutMode,
+                                        searchQuery = searchQuery,
+                                        isSearchActive = isSearchActive,
+                                        onSearchQueryChange = { searchQuery = it },
+                                        onSearchToggle = {
+                                            isSearchActive = !isSearchActive
+                                            if (!isSearchActive) searchQuery = ""
+                                        }
                                     )
                                 }
                                 Screen.SETTINGS -> {
@@ -398,7 +409,7 @@ class MainActivity : ComponentActivity() {
                 currentDoc?.listFiles()?.forEach { doc ->
                     val name = doc.name ?: ""
                     val ext = name.substringAfterLast(".", "").lowercase()
-                    val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2")
+                    val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2", "iso", "img", "qcow2")
                     val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop")
                     val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
                     val isHtml = ext in listOf("html", "htm")
@@ -421,7 +432,7 @@ class MainActivity : ComponentActivity() {
             normalFiles.asSequence().forEach {
                 if (showHiddenFiles || !it.name.startsWith(".")) {
                     val ext = it.extension.lowercase()
-                    val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2")
+                    val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2", "iso", "img", "qcow2")
                     val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop")
                     val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
                     val isHtml = ext in listOf("html", "htm")
@@ -653,12 +664,22 @@ fun FileExplorerScreen(
     onExtract: (MainActivity.FileItem) -> Unit,
     onRequestDataPermission: () -> Unit,
     clipboardFiles: List<MainActivity.FileItem>,
-    isCutMode: Boolean
+    isCutMode: Boolean,
+    searchQuery: String,
+    isSearchActive: Boolean,
+    onSearchQueryChange: (String) -> Unit,
+    onSearchToggle: () -> Unit
 ) {
     var showDialog by remember { mutableStateOf<DialogType?>(null) }
     var renameTarget by remember { mutableStateOf<MainActivity.FileItem?>(null) }
     var inputName by remember { mutableStateOf("") }
+    var showAddMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    val filteredFiles = remember(files, searchQuery) {
+        if (searchQuery.isBlank()) files
+        else files.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    }
 
     if (showDialog == DialogType.FOLDER || showDialog == DialogType.FILE) {
         AlertDialog(
@@ -675,7 +696,7 @@ fun FileExplorerScreen(
             title = { Text("Format") },
             text = {
                 Column {
-                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4").forEach { format ->
+                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4", "iso", "img", "qcow2").forEach { format ->
                         Text(format.uppercase(), modifier = Modifier.fillMaxWidth().clickable { onArchive(format); showDialog = null }.padding(12.dp))
                     }
                 }
@@ -697,8 +718,21 @@ fun FileExplorerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(currentPath, maxLines = 1, fontSize = 14.sp, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(if (isSelectionMode) Icons.Default.Close else Icons.Default.ArrowBack, null) } },
+                title = {
+                    if (isSearchActive) {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            placeholder = { Text("Ara...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = TextFieldDefaults.textFieldColors(containerColor = Color.Transparent)
+                        )
+                    } else {
+                        Text(currentPath, maxLines = 1, fontSize = 14.sp, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+                navigationIcon = { IconButton(onClick = if (isSearchActive) onSearchToggle else onBack) { Icon(if (isSelectionMode || isSearchActive) Icons.Default.Close else Icons.Default.ArrowBack, null) } },
                 actions = {
                     if (isSelectionMode) {
                         IconButton(onClick = { showDialog = DialogType.ARCHIVE_FORMAT }) { Icon(Icons.Default.Inventory, null) }
@@ -706,6 +740,7 @@ fun FileExplorerScreen(
                         IconButton(onClick = { onCopy(selectedItems.first()) }) { Icon(Icons.Default.ContentCopy, null) }
                         IconButton(onClick = { onDelete(selectedItems.first()) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                     } else if (!isArchivePreview) {
+                        if (!isSearchActive) IconButton(onClick = onSearchToggle) { Icon(Icons.Default.Search, null) }
                         val context = androidx.compose.ui.platform.LocalContext.current
                         val hasDataPermission = remember(currentPath) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -716,8 +751,15 @@ fun FileExplorerScreen(
                             IconButton(onClick = onRequestDataPermission) { Icon(Icons.Default.VpnKey, "İzin Al") }
                         }
                         if (clipboardCount > 0) IconButton(onClick = onPaste) { BadgedBox(badge = { Badge { Text("$clipboardCount") } }) { Icon(Icons.Default.ContentPaste, null) } }
-                        IconButton(onClick = { showDialog = DialogType.FILE; inputName = "yeni.txt" }) { Icon(Icons.Default.NoteAdd, null) }
-                        IconButton(onClick = { showDialog = DialogType.FOLDER; inputName = "" }) { Icon(Icons.Default.CreateNewFolder, null) }
+
+                        Box {
+                            IconButton(onClick = { showAddMenu = true }) { Icon(Icons.Default.Add, null) }
+                            DropdownMenu(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
+                                DropdownMenuItem(text = { Text("Yeni Dosya") }, onClick = { showAddMenu = false; showDialog = DialogType.FILE; inputName = "yeni.txt" }, leadingIcon = { Icon(Icons.Default.NoteAdd, null) })
+                                DropdownMenuItem(text = { Text("Yeni Klasör") }, onClick = { showAddMenu = false; showDialog = DialogType.FOLDER; inputName = "" }, leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) })
+                            }
+                        }
+
                         IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null) }
                         IconButton(onClick = onRootToggle) { Icon(Icons.Default.Shield, null) }
                     }
@@ -737,7 +779,7 @@ fun FileExplorerScreen(
         }
     ) { padding ->
         LazyColumn(state = listState, modifier = Modifier.padding(padding)) {
-            items(files, key = { it.path + it.name }) { file ->
+            items(filteredFiles, key = { it.path + it.name }) { file ->
                 val isInClipboard = clipboardFiles.any { it.path == file.path }
                 FileRow(
                     file = file,
