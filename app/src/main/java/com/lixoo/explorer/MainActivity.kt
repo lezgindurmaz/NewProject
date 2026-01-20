@@ -768,7 +768,7 @@ fun FileExplorerScreen(
             title = { Text("Arşiv Formatı") },
             text = {
                 Column {
-                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4").forEach { format ->
+                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4", "iso").forEach { format ->
                         Text(format.uppercase(), modifier = Modifier.fillMaxWidth().clickable { onArchive(format); showDialog = null }.padding(12.dp))
                     }
                 }
@@ -793,7 +793,7 @@ fun FileExplorerScreen(
 
                     Text("Format:", fontWeight = FontWeight.Bold)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        listOf("iso", "img", "qcow2").forEach { f ->
+                        listOf("iso").forEach { f ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(4.dp)) {
                                 RadioButton(selected = selectedFormat == f, onClick = { selectedFormat = f })
                                 Text(f.uppercase())
@@ -806,8 +806,7 @@ fun FileExplorerScreen(
                     Column {
                         val fsOptions = when (selectedFormat) {
                             "iso" -> listOf("ISO9660", "UDF", "Joliet")
-                            "img" -> listOf("FAT32", "NTFS", "EXT4", "RAW")
-                            else -> listOf("QCOW2")
+                            else -> listOf("ISO9660")
                         }
                         if (selectedFS !in fsOptions) selectedFS = fsOptions[0]
 

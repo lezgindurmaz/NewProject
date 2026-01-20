@@ -30,7 +30,7 @@ object ArchiveUtils {
             "zip" -> compressZip(files, outputFile)
             "tar" -> compressTar(files, outputFile)
             "7z" -> compress7z(files, outputFile)
-            "iso", "img", "qcow2" -> compressDiskImage(files, outputFile, format.lowercase())
+            "iso" -> compressDiskImage(files, outputFile, format.lowercase())
             "gz", "gzip" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.GZIP)
             "bz2", "bzip2" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.BZIP2)
             "xz" -> if (files.size == 1) compressStandalone(files[0], outputFile, CompressorStreamFactory.XZ)
@@ -74,9 +74,9 @@ object ArchiveUtils {
     }
 
     private fun compressDiskImage(files: List<File>, outputFile: File, format: String) {
-        // High-performance "Disk-like" creation using 7z logic as a carrier
-        // This is the most compatible way on Android without native mkisofs
-        compress7z(files, outputFile)
+        // ISO creation placeholder - in a real app we might use a library like genisoimage
+        // for now we will keep using a compatible archive format as a container but named .iso
+        compressZip(files, outputFile)
     }
 
     private fun <E : ArchiveEntry> addFileToArchive(out: ArchiveOutputStream<E>, file: File, base: String) {
@@ -139,9 +139,8 @@ object ArchiveUtils {
 
         val name = archiveFile.name.lowercase()
         val result = when {
-            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {
-                val contents = list7zContents(archiveFile)
-                if (contents.isEmpty()) listGenericDiskContents(archiveFile) else contents
+            name.endsWith(".7z") -> {
+                list7zContents(archiveFile)
             }
             name.endsWith(".zip") -> listStandardArchiveContents(archiveFile, "zip")
             name.endsWith(".tar") -> listStandardArchiveContents(archiveFile, "tar")
@@ -247,7 +246,7 @@ object ArchiveUtils {
 
         val name = archiveFile.name.lowercase()
         when {
-            name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {
+            name.endsWith(".7z") -> {
                 try { extract7z(archiveFile, outputDir, entryName) }
                 catch (e: Exception) { extractGeneric(archiveFile, outputDir, entryName) }
             }

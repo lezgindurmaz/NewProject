@@ -8,65 +8,26 @@ object DiskImageUtils {
 
     fun isDiskImage(file: File): Boolean {
         if (!file.exists() || file.isDirectory) return false
+        if (!file.name.lowercase().endsWith(".iso")) return false
         val raf = RandomAccessFile(file, "r")
         try {
-            val header = ByteArray(16)
-            raf.read(header)
-
-            // QCOW2: QFI\xfb
-            if (header[0] == 'Q'.code.toByte() && header[1] == 'F'.code.toByte() && header[2] == 'I'.code.toByte() && header[3] == 0xfb.toByte()) {
-                return true
-            }
-
             // ISO 9660: CD001 at 0x8001
             raf.seek(0x8001)
             val isoId = ByteArray(5)
             raf.read(isoId)
             if (isoId.contentEquals("CD001".toByteArray())) return true
-
-            // FAT32: 55 AA at 510
-            raf.seek(510)
-            val fatSig = ByteArray(2)
-            raf.read(fatSig)
-            if (fatSig[0] == 0x55.toByte() && fatSig[1] == 0xAA.toByte()) return true
-
-        } catch (e: Exception) {} finally { raf.close() }
+        } catch (e: Exception) {
+        } finally {
+            raf.close()
+        }
         return false
     }
 
     fun listDiskContents(file: File): List<ArchiveUtils.ArchiveEntryInfo> {
-        val contents = mutableListOf<ArchiveUtils.ArchiveEntryInfo>()
-        val raf = RandomAccessFile(file, "r")
-        try {
-            raf.seek(0)
-            val header = ByteArray(4)
-            raf.read(header)
-
-            if (header[0] == 'Q'.code.toByte() && header[1] == 'F'.code.toByte() && header[2] == 'I'.code.toByte() && header[3] == 0xfb.toByte()) {
-                contents.add(ArchiveUtils.ArchiveEntryInfo("[QCOW2 DATA]", false, file.length(), file.lastModified()))
-                return contents
-            }
-
-            raf.seek(0x8001)
-            val isoId = ByteArray(5)
-            raf.read(isoId)
-            if (isoId.contentEquals("CD001".toByteArray())) {
-                return parseIso9660(file)
-            }
-
-            raf.seek(510)
-            val fatSig = ByteArray(2)
-            raf.read(fatSig)
-            if (fatSig[0] == 0x55.toByte() && fatSig[1] == 0xAA.toByte()) {
-                contents.add(ArchiveUtils.ArchiveEntryInfo("[FAT32 VOLUME] " + file.name, false, file.length(), file.lastModified()))
-                return contents
-            }
-
-            // Default RAW fallback
-            contents.add(ArchiveUtils.ArchiveEntryInfo("[RAW IMAGE VOLUME]", false, file.length(), file.lastModified()))
-
-        } catch (e: Exception) {} finally { raf.close() }
-        return contents
+        if (file.name.lowercase().endsWith(".iso")) {
+            return parseIso9660(file)
+        }
+        return emptyList()
     }
 
     private fun parseIso9660(file: File): List<ArchiveUtils.ArchiveEntryInfo> {
@@ -133,32 +94,6 @@ object DiskImageUtils {
     fun extractDiskContent(file: File, outputDir: File, entryName: String? = null) {
         if (file.name.lowercase().endsWith(".iso")) {
             extractFromIso(file, outputDir, entryName)
-        } else {
-            // Fallback for QCOW2 and IMG using ArchiveStreamFactory
-            try {
-                val fis = java.io.FileInputStream(file)
-                val bis = java.io.BufferedInputStream(fis)
-                val ais = org.apache.commons.compress.archivers.ArchiveStreamFactory().createArchiveInputStream(bis) as org.apache.commons.compress.archivers.ArchiveInputStream<org.apache.commons.compress.archivers.ArchiveEntry>
-                var entry = ais.nextEntry
-                while (entry != null) {
-                    if (entryName == null || entry.name == entryName || entry.name.startsWith("$entryName/")) {
-                        val outFile = File(outputDir, entry.name)
-                        if (entry.isDirectory) {
-                            outFile.mkdirs()
-                        } else {
-                            outFile.parentFile?.mkdirs()
-                            outFile.outputStream().use { out -> ais.copyTo(out) }
-                        }
-                    }
-                    entry = ais.nextEntry
-                }
-                ais.close()
-            } catch (e: Exception) {
-                // Last resort: raw copy if entryName is null, otherwise fail
-                if (entryName == null) {
-                    file.copyTo(File(outputDir, file.name), overwrite = true)
-                }
-            }
         }
     }
 
@@ -248,21 +183,24 @@ object DiskImageUtils {
 
                     if (fullPath == targetName) {
                         if (isDir) {
-                            File(outputDir, name).mkdirs()
-                            // Could recursively extract dir, but usually selective is for files
+                            val newOutDir = File(outputDir, name)
+                            newOutDir.mkdirs()
+                            extractIsoDirectoryRecursive(raf, extent.toLong() * 2048, dataSize.toLong(), newOutDir)
                         } else {
                             val outFile = File(outputDir, name)
+                            val savedPos = raf.filePointer
                             raf.seek(extent.toLong() * 2048)
                             outFile.outputStream().use { out ->
                                 val buffer = ByteArray(8192)
                                 var remaining = dataSize.toLong()
                                 while (remaining > 0) {
                                     val read = raf.read(buffer, 0, Math.min(buffer.size.toLong(), remaining).toInt())
-                                    if (read == -1) break
+                                    if (read <= 0) break
                                     out.write(buffer, 0, read)
                                     remaining -= read
                                 }
                             }
+                            raf.seek(savedPos)
                         }
                         return
                     } else if (isDir) {
