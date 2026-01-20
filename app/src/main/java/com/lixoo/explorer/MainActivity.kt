@@ -36,6 +36,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -83,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private val selectedItems = mutableStateListOf<FileItem>()
     private var isSelectionMode by mutableStateOf(false)
     private val clipboardFiles = mutableStateListOf<FileItem>()
+    private var isCutMode by mutableStateOf(false)
 
     // Settings States (Persistent)
     private var showHiddenFiles by mutableStateOf(false)
@@ -91,9 +93,9 @@ class MainActivity : ComponentActivity() {
 
     // Loading State
     private var loadingMessage by mutableStateOf<String?>(null)
+    private var refreshJob: kotlinx.coroutines.Job? = null
 
     private lateinit var prefs: SharedPreferences
-    private var mediaPlayer: MediaPlayer? = null
 
     data class FileItem(
         val name: String,
@@ -159,7 +161,16 @@ class MainActivity : ComponentActivity() {
                                             val targets = if (isSelectionMode) selectedItems.toList() else listOf(it)
                                             clipboardFiles.clear()
                                             clipboardFiles.addAll(targets)
+                                            isCutMode = false
                                             Toast.makeText(this@MainActivity, "${targets.size} öğe kopyalandı", Toast.LENGTH_SHORT).show()
+                                            clearSelection()
+                                        },
+                                        onCut = {
+                                            val targets = if (isSelectionMode) selectedItems.toList() else listOf(it)
+                                            clipboardFiles.clear()
+                                            clipboardFiles.addAll(targets)
+                                            isCutMode = true
+                                            Toast.makeText(this@MainActivity, "${targets.size} öğe kesildi", Toast.LENGTH_SHORT).show()
                                             clearSelection()
                                         },
                                         onPaste = { pasteFiles() },
@@ -179,7 +190,9 @@ class MainActivity : ComponentActivity() {
                                             else extractArchive(item)
                                             clearSelection()
                                         },
-                                        onRequestDataPermission = { requestDataPermission() }
+                                        onRequestDataPermission = { requestDataPermission() },
+                                        clipboardFiles = clipboardFiles,
+                                        isCutMode = isCutMode
                                     )
                                 }
                                 Screen.SETTINGS -> {
@@ -358,7 +371,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshFiles() {
-        lifecycleScope.launch {
+        refreshJob?.cancel()
+        refreshJob = lifecycleScope.launch {
             val items = withContext(Dispatchers.IO) {
                 if (isArchivePreview) loadArchiveFiles() else loadLocalFiles()
             }
@@ -496,6 +510,7 @@ class MainActivity : ComponentActivity() {
     private fun renameFile(item: FileItem, newName: String) {
         val source = File(item.path)
         val destination = File(source.parent, newName)
+        ArchiveUtils.clearCache()
         if (source.renameTo(destination)) refreshFiles()
         else if (isRootAvailable) { RootUtils.runCommand("mv \"${source.absolutePath}\" \"${destination.absolutePath}\""); refreshFiles() }
     }
@@ -503,6 +518,7 @@ class MainActivity : ComponentActivity() {
     private fun deleteFiles(items: List<FileItem>) {
         lifecycleScope.launch {
             loadingMessage = "Siliniyor..."
+            ArchiveUtils.clearCache()
             withContext(Dispatchers.IO) {
                 items.forEach { item ->
                     val file = File(item.path)
@@ -517,20 +533,34 @@ class MainActivity : ComponentActivity() {
     private fun pasteFiles() {
         val targets = clipboardFiles.toList()
         if (targets.isEmpty()) return
+        val isCut = isCutMode
+        ArchiveUtils.clearCache()
         lifecycleScope.launch {
-            loadingMessage = "Yapıştırılıyor..."
+            loadingMessage = if (isCut) "Taşınıyor..." else "Yapıştırılıyor..."
             withContext(Dispatchers.IO) {
                 targets.forEach { source ->
                     val dest = File(currentPath, source.name)
                     try {
-                        if (source.isDirectory) File(source.path).copyRecursively(dest, overwrite = true)
-                        else File(source.path).copyTo(dest, overwrite = true)
+                        if (isCut) {
+                            if (!File(source.path).renameTo(dest)) {
+                                if (source.isDirectory) File(source.path).copyRecursively(dest, overwrite = true)
+                                else File(source.path).copyTo(dest, overwrite = true)
+                                File(source.path).deleteRecursively()
+                            }
+                        } else {
+                            if (source.isDirectory) File(source.path).copyRecursively(dest, overwrite = true)
+                            else File(source.path).copyTo(dest, overwrite = true)
+                        }
                     } catch (e: Exception) {
-                        if (isRootAvailable) RootUtils.runCommand("cp -rf \"${source.path}\" \"${dest.absolutePath}\"")
+                        if (isRootAvailable) {
+                            val cmd = if (isCut) "mv" else "cp -rf"
+                            RootUtils.runCommand("$cmd \"${source.path}\" \"${dest.absolutePath}\"")
+                        }
                     }
                 }
             }
             clipboardFiles.clear()
+            isCutMode = false
             loadingMessage = null
             refreshFiles()
         }
@@ -589,7 +619,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun stopAudio() { mediaPlayer?.release(); mediaPlayer = null }
+    private fun stopAudio() { /* Audio is handled by SoundPlayerScreen's DisposableEffect */ }
 
     private fun openFile(file: File) {
         try {
@@ -616,11 +646,14 @@ fun FileExplorerScreen(
     onFileClick: (MainActivity.FileItem) -> Unit, onFileLongClick: (MainActivity.FileItem) -> Unit,
     onBack: () -> Unit, onDelete: (MainActivity.FileItem) -> Unit,
     onRootToggle: () -> Unit, onCopy: (MainActivity.FileItem) -> Unit,
+    onCut: (MainActivity.FileItem) -> Unit,
     onPaste: () -> Unit, onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit, onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit, onArchive: (String) -> Unit,
     onExtract: (MainActivity.FileItem) -> Unit,
-    onRequestDataPermission: () -> Unit
+    onRequestDataPermission: () -> Unit,
+    clipboardFiles: List<MainActivity.FileItem>,
+    isCutMode: Boolean
 ) {
     var showDialog by remember { mutableStateOf<DialogType?>(null) }
     var renameTarget by remember { mutableStateOf<MainActivity.FileItem?>(null) }
@@ -669,6 +702,7 @@ fun FileExplorerScreen(
                 actions = {
                     if (isSelectionMode) {
                         IconButton(onClick = { showDialog = DialogType.ARCHIVE_FORMAT }) { Icon(Icons.Default.Inventory, null) }
+                        IconButton(onClick = { onCut(selectedItems.first()) }) { Icon(Icons.Default.ContentCut, null) }
                         IconButton(onClick = { onCopy(selectedItems.first()) }) { Icon(Icons.Default.ContentCopy, null) }
                         IconButton(onClick = { onDelete(selectedItems.first()) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                     } else if (!isArchivePreview) {
@@ -704,10 +738,12 @@ fun FileExplorerScreen(
     ) { padding ->
         LazyColumn(state = listState, modifier = Modifier.padding(padding)) {
             items(files, key = { it.path + it.name }) { file ->
+                val isInClipboard = clipboardFiles.any { it.path == file.path }
                 FileRow(
                     file = file,
                     isSelected = selectedItems.any { it.path == file.path && it.name == file.name },
                     isArchivePreview = isArchivePreview,
+                    isCut = isCutMode && isInClipboard,
                     onFileClick = { onFileClick(file) },
                     onFileLongClick = { onFileLongClick(file) },
                     onRename = { renameTarget = it },
@@ -722,6 +758,7 @@ fun FileExplorerScreen(
 @Composable
 fun FileRow(
     file: MainActivity.FileItem, isSelected: Boolean, isArchivePreview: Boolean,
+    isCut: Boolean,
     onFileClick: () -> Unit, onFileLongClick: () -> Unit,
     onRename: (MainActivity.FileItem) -> Unit, onExtract: () -> Unit
 ) {
@@ -732,6 +769,7 @@ fun FileRow(
 
     Row(
         modifier = Modifier.fillMaxWidth()
+            .alpha(if (isCut) 0.5f else 1f)
             .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
             .combinedClickable(onClick = onFileClick, onLongClick = onFileLongClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -862,6 +900,8 @@ fun formatSize(size: Long): String {
 
 @Composable
 fun LixooTheme(darkTheme: Boolean, primaryColor: Color, content: @Composable () -> Unit) {
-    val colorScheme = if (darkTheme) darkColorScheme(primary = primaryColor) else lightColorScheme(primary = primaryColor)
+    val colorScheme = remember(darkTheme, primaryColor) {
+        if (darkTheme) darkColorScheme(primary = primaryColor) else lightColorScheme(primary = primaryColor)
+    }
     MaterialTheme(colorScheme = colorScheme, content = content)
 }

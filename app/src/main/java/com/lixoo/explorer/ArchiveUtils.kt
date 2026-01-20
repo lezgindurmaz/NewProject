@@ -214,10 +214,12 @@ object ArchiveUtils {
     }
 
     private fun extractStandard(file: File, outputDir: File, format: String, targetEntry: String?) {
+        val fis = FileInputStream(file)
+        val bis = BufferedInputStream(fis)
         val inputStream: ArchiveInputStream<*> = when (format) {
-            "zip" -> ZipArchiveInputStream(FileInputStream(file))
-            "tar" -> TarArchiveInputStream(FileInputStream(file))
-            else -> return
+            "zip" -> ZipArchiveInputStream(bis)
+            "tar" -> TarArchiveInputStream(bis)
+            else -> { bis.close(); return }
         }
         processArchiveInputStream(inputStream, outputDir, targetEntry)
     }
