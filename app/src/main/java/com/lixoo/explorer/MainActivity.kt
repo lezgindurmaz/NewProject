@@ -190,8 +190,8 @@ class MainActivity : ComponentActivity() {
                                             createArchive(selectedItems.toList(), format)
                                             clearSelection()
                                         },
-                                        onDiskImage = { format, fs ->
-                                            createDiskImage(selectedItems.toList(), format, fs)
+                                        onDiskImage = { format, fs, label ->
+                                            createDiskImage(selectedItems.toList(), format, fs, label)
                                             clearSelection()
                                         },
                                         onExtract = { item ->
@@ -601,13 +601,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun createDiskImage(items: List<FileItem>, format: String, fs: String) {
+    private fun createDiskImage(items: List<FileItem>, format: String, fs: String, label: String) {
         val outputName = (if (items.size == 1) items.first().name else "disk") + "." + format
         val outputFile = File(currentPath, outputName)
         lifecycleScope.launch {
             loadingMessage = "Disk kalıbı oluşturuluyor ($fs)..."
             withContext(Dispatchers.IO) {
-                try { ArchiveUtils.compress(items.map { File(it.path) }, outputFile, format) } catch (e: Exception) {}
+                try { ArchiveUtils.compressDiskImage(items.map { File(it.path) }, outputFile, format, label) } catch (e: Exception) {}
             }
             loadingMessage = null
             refreshFiles()
@@ -734,7 +734,7 @@ fun FileExplorerScreen(
     onPaste: () -> Unit, onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit, onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit, onArchive: (String) -> Unit,
-    onDiskImage: (String, String) -> Unit,
+    onDiskImage: (String, String, String) -> Unit,
     onExtract: (MainActivity.FileItem) -> Unit,
     onRequestDataPermission: () -> Unit,
     clipboardFiles: List<MainActivity.FileItem>,
@@ -824,7 +824,7 @@ fun FileExplorerScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = { onDiskImage(selectedFormat, selectedFS); showDialog = null }) { Text("Oluştur") }
+                Button(onClick = { onDiskImage(selectedFormat, selectedFS, volumeLabel); showDialog = null }) { Text("Oluştur") }
             }
         )
     }

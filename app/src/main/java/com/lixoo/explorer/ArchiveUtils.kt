@@ -73,10 +73,12 @@ object ArchiveUtils {
         }
     }
 
-    private fun compressDiskImage(files: List<File>, outputFile: File, format: String) {
-        // ISO creation placeholder - in a real app we might use a library like genisoimage
-        // for now we will keep using a compatible archive format as a container but named .iso
-        compressZip(files, outputFile)
+    fun compressDiskImage(files: List<File>, outputFile: File, format: String, label: String = "LIXOO_DISK") {
+        if (format.lowercase() == "iso") {
+            DiskImageUtils.createIso(files, outputFile, label)
+        } else {
+            compressZip(files, outputFile)
+        }
     }
 
     private fun <E : ArchiveEntry> addFileToArchive(out: ArchiveOutputStream<E>, file: File, base: String) {
