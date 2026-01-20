@@ -10,7 +10,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.Settings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -26,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -40,8 +44,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -52,7 +58,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 enum class DialogType { FOLDER, FILE, ARCHIVE_FORMAT }
-enum class Screen { EXPLORER, SETTINGS, EDITOR, PLAYER }
+enum class Screen { EXPLORER, SETTINGS, EDITOR, PLAYER, HTML_VIEWER }
 
 class MainActivity : ComponentActivity() {
 
@@ -79,6 +85,9 @@ class MainActivity : ComponentActivity() {
     private var isDarkMode by mutableStateOf(true)
     private var primaryColor by mutableStateOf(Color(0xFF6200EE))
 
+    // Loading State
+    private var loadingMessage by mutableStateOf<String?>(null)
+
     private lateinit var prefs: SharedPreferences
     private var mediaPlayer: MediaPlayer? = null
 
@@ -93,7 +102,8 @@ class MainActivity : ComponentActivity() {
         val icon: ImageVector = Icons.Default.FilePresent,
         val isArchive: Boolean = false,
         val isText: Boolean = false,
-        val isAudio: Boolean = false
+        val isAudio: Boolean = false,
+        val isHtml: Boolean = false
     )
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +131,7 @@ class MainActivity : ComponentActivity() {
                                         isSelectionMode = isSelectionMode,
                                         isArchivePreview = isArchivePreview,
                                         clipboardCount = clipboardFiles.size,
+                                        loadingMessage = loadingMessage,
                                         onFileClick = { handleFileClick(it) },
                                         onFileLongClick = { item ->
                                             if (!isSelectionMode && !isArchivePreview) {
@@ -163,7 +174,8 @@ class MainActivity : ComponentActivity() {
                                             if (isArchivePreview) extractSelective(item)
                                             else extractArchive(item)
                                             clearSelection()
-                                        }
+                                        },
+                                        onRequestDataPermission = { requestDataPermission() }
                                     )
                                 }
                                 Screen.SETTINGS -> {
@@ -191,6 +203,14 @@ class MainActivity : ComponentActivity() {
                                         SoundPlayerScreen(
                                             file = file,
                                             onBack = { stopAudio(); currentScreen = Screen.EXPLORER }
+                                        )
+                                    }
+                                }
+                                Screen.HTML_VIEWER -> {
+                                    activeFile?.let { file ->
+                                        HtmlViewerScreen(
+                                            file = file,
+                                            onBack = { currentScreen = Screen.EXPLORER }
                                         )
                                     }
                                 }
@@ -225,6 +245,9 @@ class MainActivity : ComponentActivity() {
             } else if (item.isAudio && !isArchivePreview) {
                 activeFile = File(item.path)
                 currentScreen = Screen.PLAYER
+            } else if (item.isHtml && !isArchivePreview) {
+                activeFile = File(item.path)
+                currentScreen = Screen.HTML_VIEWER
             } else {
                 if (!isArchivePreview) openFile(File(item.path))
             }
@@ -233,7 +256,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleBack() {
         when (currentScreen) {
-            Screen.SETTINGS, Screen.EDITOR -> currentScreen = Screen.EXPLORER
+            Screen.SETTINGS, Screen.EDITOR, Screen.HTML_VIEWER -> currentScreen = Screen.EXPLORER
             Screen.PLAYER -> { stopAudio(); currentScreen = Screen.EXPLORER }
             Screen.EXPLORER -> {
                 if (isSelectionMode) clearSelection()
@@ -311,6 +334,25 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshFiles() }
 
+    private fun requestDataPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                val uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3AAndroid%2Fdata")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, uri)
+            }
+            dataPermissionLauncher.launch(intent)
+        }
+    }
+
+    private val dataPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { uri ->
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                refreshFiles()
+            }
+        }
+    }
+
     private fun refreshFiles() {
         lifecycleScope.launch {
             val items = withContext(Dispatchers.IO) {
@@ -325,21 +367,54 @@ class MainActivity : ComponentActivity() {
         val items = mutableListOf<FileItem>()
         val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
-        val listFiles = file.listFiles()
-        if (listFiles != null) {
-            listFiles.forEach {
+        // Handle Android/data via SAF if needed
+        if (currentPath.contains("/Android/data") && !isRootAvailable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val treeUri = contentResolver.persistedUriPermissions.find { it.uri.toString().contains("Android%2Fdata") }?.uri
+            if (treeUri != null) {
+                val relativePath = currentPath.substringAfter("Android/data")
+                var currentDoc = DocumentFile.fromTreeUri(this, treeUri)
+                if (relativePath.isNotEmpty()) {
+                    relativePath.split("/").filter { it.isNotEmpty() }.forEach { part ->
+                        currentDoc = currentDoc?.findFile(part)
+                    }
+                }
+                currentDoc?.listFiles()?.forEach { doc ->
+                    val name = doc.name ?: ""
+                    val ext = name.substringAfterLast(".", "").lowercase()
+                    val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2")
+                    val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop")
+                    val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
+                    val isHtml = ext in listOf("html", "htm")
+                    val newPath = if (currentPath.endsWith("/")) currentPath + name else "$currentPath/$name"
+
+                    items.add(FileItem(
+                        name, newPath, doc.isDirectory, doc.length(), doc.lastModified(),
+                        formattedSize = if (doc.isDirectory) "" else formatSize(doc.length()),
+                        formattedDate = sdf.format(Date(doc.lastModified())),
+                        icon = if (doc.isDirectory) Icons.Default.Folder else IconUtils.getIconForExtension(ext),
+                        isArchive = isArchive, isText = isText, isAudio = isAudio, isHtml = isHtml
+                    ))
+                }
+                return items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+            }
+        }
+
+        val normalFiles = file.listFiles()
+        if (normalFiles != null) {
+            normalFiles.forEach {
                 if (showHiddenFiles || !it.name.startsWith(".")) {
                     val ext = it.extension.lowercase()
                     val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2")
                     val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop")
                     val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
+                    val isHtml = ext in listOf("html", "htm")
                     val icon = if (it.isDirectory) Icons.Default.Folder else IconUtils.getIconForExtension(ext)
 
                     items.add(FileItem(
                         it.name, it.absolutePath, it.isDirectory, it.length(), it.lastModified(),
                         formattedSize = if (it.isDirectory) "" else formatSize(it.length()),
                         formattedDate = sdf.format(Date(it.lastModified())),
-                        icon = icon, isArchive = isArchive, isText = isText, isAudio = isAudio
+                        icon = icon, isArchive = isArchive, isText = isText, isAudio = isAudio, isHtml = isHtml
                     ))
                 }
             }
@@ -358,6 +433,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadArchiveFiles(): List<FileItem> {
+        loadingMessage = "Dosya açılıyor..."
         val archiveFile = File(currentArchivePath)
         val entries = try { ArchiveUtils.listContents(archiveFile) } catch (e: Exception) { emptyList() }
         val items = mutableListOf<FileItem>()
@@ -388,6 +464,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        loadingMessage = null
         return items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
     }
 
@@ -419,12 +496,14 @@ class MainActivity : ComponentActivity() {
 
     private fun deleteFiles(items: List<FileItem>) {
         lifecycleScope.launch {
+            loadingMessage = "Siliniyor..."
             withContext(Dispatchers.IO) {
                 items.forEach { item ->
                     val file = File(item.path)
                     if (!file.deleteRecursively() && isRootAvailable) RootUtils.runCommand("rm -rf \"${item.path}\"")
                 }
             }
+            loadingMessage = null
             refreshFiles()
         }
     }
@@ -433,6 +512,7 @@ class MainActivity : ComponentActivity() {
         val targets = clipboardFiles.toList()
         if (targets.isEmpty()) return
         lifecycleScope.launch {
+            loadingMessage = "Yapıştırılıyor..."
             withContext(Dispatchers.IO) {
                 targets.forEach { source ->
                     val dest = File(currentPath, source.name)
@@ -445,6 +525,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             clipboardFiles.clear()
+            loadingMessage = null
             refreshFiles()
         }
     }
@@ -453,7 +534,11 @@ class MainActivity : ComponentActivity() {
         val outputName = (if (items.size == 1) items.first().name else "arsiv") + "." + format
         val outputFile = File(currentPath, outputName)
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { try { ArchiveUtils.compress(items.map { File(it.path) }, outputFile, format) } catch (e: Exception) {} }
+            loadingMessage = "Arşivleniyor..."
+            withContext(Dispatchers.IO) {
+                try { ArchiveUtils.compress(items.map { File(it.path) }, outputFile, format) } catch (e: Exception) {}
+            }
+            loadingMessage = null
             refreshFiles()
         }
     }
@@ -462,7 +547,11 @@ class MainActivity : ComponentActivity() {
         val archiveFile = File(item.path)
         val outputDir = File(archiveFile.parent, archiveFile.nameWithoutExtension)
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { try { ArchiveUtils.extract(archiveFile, outputDir) } catch (e: Exception) {} }
+            loadingMessage = "Çıkartılıyor..."
+            withContext(Dispatchers.IO) {
+                try { ArchiveUtils.extract(archiveFile, outputDir) } catch (e: Exception) {}
+            }
+            loadingMessage = null
             refreshFiles()
         }
     }
@@ -471,7 +560,11 @@ class MainActivity : ComponentActivity() {
         val archiveFile = File(currentArchivePath)
         val outputDir = File(archiveFile.parent, "extracted_${archiveFile.nameWithoutExtension}")
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { try { ArchiveUtils.extract(archiveFile, outputDir, item.path) } catch (e: Exception) {} }
+            loadingMessage = "Öğe çıkartılıyor..."
+            withContext(Dispatchers.IO) {
+                try { ArchiveUtils.extract(archiveFile, outputDir, item.path) } catch (e: Exception) {}
+            }
+            loadingMessage = null
             Toast.makeText(this@MainActivity, "Çıkartıldı: ${outputDir.name}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -494,7 +587,11 @@ class MainActivity : ComponentActivity() {
 
     private fun openFile(file: File) {
         try {
-            val uri = FileProvider.getUriForFile(this, "$packageName.provider", file)
+            val uri = if (file.absolutePath.startsWith("content://")) {
+                Uri.parse(file.absolutePath)
+            } else {
+                FileProvider.getUriForFile(this, "$packageName.provider", file)
+            }
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, contentResolver.getType(uri) ?: "*/*")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -509,14 +606,15 @@ class MainActivity : ComponentActivity() {
 fun FileExplorerScreen(
     currentPath: String, files: List<MainActivity.FileItem>,
     selectedItems: List<MainActivity.FileItem>, isSelectionMode: Boolean,
-    isArchivePreview: Boolean, clipboardCount: Int,
+    isArchivePreview: Boolean, clipboardCount: Int, loadingMessage: String?,
     onFileClick: (MainActivity.FileItem) -> Unit, onFileLongClick: (MainActivity.FileItem) -> Unit,
     onBack: () -> Unit, onDelete: (MainActivity.FileItem) -> Unit,
     onRootToggle: () -> Unit, onCopy: (MainActivity.FileItem) -> Unit,
     onPaste: () -> Unit, onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit, onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit, onArchive: (String) -> Unit,
-    onExtract: (MainActivity.FileItem) -> Unit
+    onExtract: (MainActivity.FileItem) -> Unit,
+    onRequestDataPermission: () -> Unit
 ) {
     var showDialog by remember { mutableStateOf<DialogType?>(null) }
     var renameTarget by remember { mutableStateOf<MainActivity.FileItem?>(null) }
@@ -568,6 +666,15 @@ fun FileExplorerScreen(
                         IconButton(onClick = { onCopy(selectedItems.first()) }) { Icon(Icons.Default.ContentCopy, null) }
                         IconButton(onClick = { onDelete(selectedItems.first()) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                     } else if (!isArchivePreview) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val hasDataPermission = remember(currentPath) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                context.contentResolver.persistedUriPermissions.any { perm -> perm.uri.toString().contains("Android%2Fdata") }
+                            } else true
+                        }
+                        if (currentPath.endsWith("/Android/data") && !hasDataPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            IconButton(onClick = onRequestDataPermission) { Icon(Icons.Default.VpnKey, "İzin Al") }
+                        }
                         if (clipboardCount > 0) IconButton(onClick = onPaste) { BadgedBox(badge = { Badge { Text("$clipboardCount") } }) { Icon(Icons.Default.ContentPaste, null) } }
                         IconButton(onClick = { showDialog = DialogType.FILE; inputName = "yeni.txt" }) { Icon(Icons.Default.NoteAdd, null) }
                         IconButton(onClick = { showDialog = DialogType.FOLDER; inputName = "" }) { Icon(Icons.Default.CreateNewFolder, null) }
@@ -576,6 +683,17 @@ fun FileExplorerScreen(
                     }
                 }
             )
+        },
+        bottomBar = {
+            loadingMessage?.let {
+                Surface(tonalElevation = 8.dp, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(it, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
         }
     ) { padding ->
         LazyColumn(state = listState, modifier = Modifier.padding(padding)) {
@@ -631,6 +749,25 @@ fun TextEditorScreen(file: File, onSave: (String) -> Unit, onBack: () -> Unit) {
         topBar = { TopAppBar(title = { Text(file.name, maxLines = 1, fontSize = 14.sp) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } }, actions = { IconButton(onClick = { onSave(content) }) { Icon(Icons.Default.Save, null) } }) }
     ) { padding ->
         TextField(value = content, onValueChange = { content = it }, modifier = Modifier.fillMaxSize().padding(padding), colors = TextFieldDefaults.textFieldColors(containerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HtmlViewerScreen(file: File, onBack: () -> Unit) {
+    Scaffold(
+        topBar = { TopAppBar(title = { Text(file.name, maxLines = 1, fontSize = 14.sp) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } }) }
+    ) { padding ->
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    webViewClient = WebViewClient()
+                    settings.javaScriptEnabled = true
+                    loadUrl("file://${file.absolutePath}")
+                }
+            },
+            modifier = Modifier.fillMaxSize().padding(padding)
+        )
     }
 }
 
