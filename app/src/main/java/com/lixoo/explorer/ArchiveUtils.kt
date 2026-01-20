@@ -129,6 +129,14 @@ object ArchiveUtils {
             return archiveCache[path]!!
         }
 
+        if (DiskImageUtils.isDiskImage(archiveFile)) {
+            val result = DiskImageUtils.listDiskContents(archiveFile)
+            if (result.isNotEmpty()) {
+                archiveCache[path] = result
+                return result
+            }
+        }
+
         val name = archiveFile.name.lowercase()
         val result = when {
             name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {
@@ -231,6 +239,12 @@ object ArchiveUtils {
 
     fun extract(archiveFile: File, outputDir: File, entryName: String? = null) {
         if (!outputDir.exists()) outputDir.mkdirs()
+
+        if (DiskImageUtils.isDiskImage(archiveFile)) {
+            DiskImageUtils.extractDiskContent(archiveFile, outputDir, entryName)
+            return
+        }
+
         val name = archiveFile.name.lowercase()
         when {
             name.endsWith(".7z") || name.endsWith(".iso") || name.endsWith(".img") || name.endsWith(".qcow2") -> {

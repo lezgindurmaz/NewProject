@@ -58,7 +58,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class DialogType { FOLDER, FILE, ARCHIVE_FORMAT }
+enum class DialogType { FOLDER, FILE, ARCHIVE_FORMAT, DISK_IMAGE_FORMAT }
 enum class Screen { EXPLORER, SETTINGS, EDITOR, PLAYER, HTML_VIEWER }
 
 class MainActivity : ComponentActivity() {
@@ -188,6 +188,10 @@ class MainActivity : ComponentActivity() {
                                         onOpenSettings = { currentScreen = Screen.SETTINGS },
                                         onArchive = { format ->
                                             createArchive(selectedItems.toList(), format)
+                                            clearSelection()
+                                        },
+                                        onDiskImage = { format, fs ->
+                                            createDiskImage(selectedItems.toList(), format, fs)
                                             clearSelection()
                                         },
                                         onExtract = { item ->
@@ -416,10 +420,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun searchRecursive(dir: File, query: String, depth: Int = 0) {
+    private suspend fun searchRecursive(dir: File, query: String, depth: Int = 0) {
         if (depth > 15) return
         val files = dir.listFiles() ?: return
         for (file in files) {
+            kotlinx.coroutines.yield()
             if (file.name.contains(query, ignoreCase = true)) {
                 val item = createFileItem(file)
                 lifecycleScope.launch(Dispatchers.Main) {
@@ -596,6 +601,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun createDiskImage(items: List<FileItem>, format: String, fs: String) {
+        val outputName = (if (items.size == 1) items.first().name else "disk") + "." + format
+        val outputFile = File(currentPath, outputName)
+        lifecycleScope.launch {
+            loadingMessage = "Disk kalıbı oluşturuluyor ($fs)..."
+            withContext(Dispatchers.IO) {
+                try { ArchiveUtils.compress(items.map { File(it.path) }, outputFile, format) } catch (e: Exception) {}
+            }
+            loadingMessage = null
+            refreshFiles()
+        }
+    }
+
     private fun pasteFiles() {
         val targets = clipboardFiles.toList()
         if (targets.isEmpty()) return
@@ -716,6 +734,7 @@ fun FileExplorerScreen(
     onPaste: () -> Unit, onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit, onRename: (MainActivity.FileItem, String) -> Unit,
     onOpenSettings: () -> Unit, onArchive: (String) -> Unit,
+    onDiskImage: (String, String) -> Unit,
     onExtract: (MainActivity.FileItem) -> Unit,
     onRequestDataPermission: () -> Unit,
     clipboardFiles: List<MainActivity.FileItem>,
@@ -746,15 +765,50 @@ fun FileExplorerScreen(
     if (showDialog == DialogType.ARCHIVE_FORMAT) {
         AlertDialog(
             onDismissRequest = { showDialog = null },
-            title = { Text("Format") },
+            title = { Text("Arşiv Formatı") },
             text = {
                 Column {
-                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4", "iso", "img", "qcow2").forEach { format ->
+                    listOf("zip", "7z", "tar", "tar.gz", "tar.xz", "tar.lz4", "gz", "bz2", "xz", "lz4").forEach { format ->
                         Text(format.uppercase(), modifier = Modifier.fillMaxWidth().clickable { onArchive(format); showDialog = null }.padding(12.dp))
                     }
                 }
             },
             confirmButton = {}
+        )
+    }
+
+    if (showDialog == DialogType.DISK_IMAGE_FORMAT) {
+        var selectedFormat by remember { mutableStateOf("iso") }
+        var selectedFS by remember { mutableStateOf("ISO9660") }
+        AlertDialog(
+            onDismissRequest = { showDialog = null },
+            title = { Text("Disk Kalıbı Oluştur") },
+            text = {
+                Column {
+                    Text("Format:", fontWeight = FontWeight.Bold)
+                    Row {
+                        listOf("iso", "img", "qcow2").forEach { f ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFormat = f }.padding(8.dp)) {
+                                RadioButton(selected = selectedFormat == f, onClick = { selectedFormat = f })
+                                Text(f.uppercase())
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Dosya Sistemi:", fontWeight = FontWeight.Bold)
+                    Row {
+                        listOf("ISO9660", "FAT32", "RAW").forEach { fs ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedFS = fs }.padding(8.dp)) {
+                                RadioButton(selected = selectedFS == fs, onClick = { selectedFS = fs })
+                                Text(fs)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { onDiskImage(selectedFormat, selectedFS); showDialog = null }) { Text("Oluştur") }
+            }
         )
     }
 
@@ -810,6 +864,7 @@ fun FileExplorerScreen(
                             DropdownMenu(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
                                 DropdownMenuItem(text = { Text("Yeni Dosya") }, onClick = { showAddMenu = false; showDialog = DialogType.FILE; inputName = "yeni.txt" }, leadingIcon = { Icon(Icons.Default.NoteAdd, null) })
                                 DropdownMenuItem(text = { Text("Yeni Klasör") }, onClick = { showAddMenu = false; showDialog = DialogType.FOLDER; inputName = "" }, leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) })
+                                DropdownMenuItem(text = { Text("Disk Kalıbı Oluştur") }, onClick = { showAddMenu = false; showDialog = DialogType.DISK_IMAGE_FORMAT }, leadingIcon = { Icon(Icons.Default.DiscFull, null) })
                             }
                         }
 
