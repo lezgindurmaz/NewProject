@@ -146,9 +146,7 @@ object DiskImageUtils {
                 if (id.contentEquals("CD001".toByteArray())) return true
             } else if (ext.endsWith(".qcow2")) {
                 raf.seek(0)
-                val id = ByteArray(4)
-                raf.read(id)
-                return id.contentEquals("QFI\u00fb".toByteArray(Charset.forName("ISO-8859-1")))
+                return raf.read() == 0x51 && raf.read() == 0x46 && raf.read() == 0x49 && raf.read() == 0xFB
             } else {
                 if (file.length() < 512) return false
                 raf.seek(510)
@@ -930,77 +928,143 @@ object DiskImageUtils {
     fun createQcow2(outputFile: File, sizeMB: Double, label: String) {
         val raf = RandomAccessFile(outputFile, "rw")
         try {
-            val clusterBits = 16 // 64KB clusters
+            raf.setLength(0)
+            val clusterBits = 16
             val clusterSize = 1 shl clusterBits
             val diskSize = (sizeMB * 1024 * 1024).toLong()
 
+            // Layout:
+            // Cluster 0: Header (104 bytes) + L1 Table (at offset 1024)
+            // Cluster 1: Refcount Table
+            // Cluster 2: Refcount Block 0
+            // Cluster 3: L2 Table 0
+            // Cluster 4: Data (Boot Sector + FAT)
+
+            val l2Entries = clusterSize / 8
+            val l1Size = ((diskSize / clusterSize) + l2Entries - 1) / l2Entries
+            val l1Offset = 1024L
+            val reftableOffset = clusterSize.toLong()
+            val refblockOffset = 2L * clusterSize
+            val l2Offset = 3L * clusterSize
+            val dataOffset = 4L * clusterSize
+
             // 1. Header (v3)
             val header = ByteArray(104)
-            System.arraycopy("QFI\u00fb".toByteArray(Charset.forName("ISO-8859-1")), 0, header, 0, 4)
+            header[0] = 0x51; header[1] = 0x46; header[2] = 0x49; header[3] = 0xFB.toByte()
             putIntBE(header, 4, 3) // Version 3
             header[23] = clusterBits.toByte()
             putLongBE(header, 24, diskSize)
             putIntBE(header, 32, 0) // Crypt
-
-            val l2Entries = clusterSize / 8
-            val l1Size = ((diskSize / clusterSize) + l2Entries - 1) / l2Entries
             putIntBE(header, 36, l1Size.toInt())
-
-            val l1Offset = 104L // Right after header
             putLongBE(header, 40, l1Offset)
+            putLongBE(header, 48, reftableOffset)
+            putIntBE(header, 56, 1) // 1 cluster for reftable
+            header[99] = 4.toByte() // Refcount order = 4 (16 bits)
+            putIntBE(header, 100, 104) // Header length
 
             raf.seek(0)
             raf.write(header)
 
-            // 2. L1 Table
-            val l1Table = ByteArray(l1Size.toInt() * 8)
-            // Allocate first cluster for FAT
-            val l2Offset = l1Offset + l1Table.size
-            val firstClusterOffset = l2Offset + clusterSize
-
-            putLongBE(l1Table, 0, l2Offset or (1L shl 63)) // Valid + Offset
+            // 2. L1 Table (pointing to L2 Table 0)
             raf.seek(l1Offset)
+            val l1Entry = l2Offset or (1L shl 63)
+            val l1Table = ByteArray(l1Size.toInt() * 8)
+            putLongBE(l1Table, 0, l1Entry)
             raf.write(l1Table)
 
-            // 3. L2 Table (First)
-            val l2Table = ByteArray(clusterSize)
-            putLongBE(l2Table, 0, firstClusterOffset or (1L shl 63))
+            // 3. Refcount Table (pointing to Refcount Block 0)
+            raf.seek(reftableOffset)
+            val refEntry = refblockOffset or 0 // Refcount Table entries don't have a valid bit in v3? Actually they do (it's just offset)
+            val refTable = ByteArray(clusterSize)
+            putLongBE(refTable, 0, refblockOffset)
+            raf.write(refTable)
+
+            // 4. Refcount Block (Clusters 0, 1, 2, 3, 4 are used)
+            raf.seek(refblockOffset)
+            val refBlock = ByteArray(clusterSize)
+            for (i in 0..4) {
+                // Refcount order 4 means 2 bytes per entry
+                refBlock[i * 2] = 0
+                refBlock[i * 2 + 1] = 1
+            }
+            raf.write(refBlock)
+
+            // 5. L2 Table (pointing to data cluster 4)
             raf.seek(l2Offset)
+            val l2Entry = dataOffset or (1L shl 63)
+            val l2Table = ByteArray(clusterSize)
+            putLongBE(l2Table, 0, l2Entry)
             raf.write(l2Table)
 
-            // 4. FAT16 Boot Sector in the first cluster
-            val boot = createFat16BootSector(diskSize / 512, label)
-            raf.seek(firstClusterOffset)
+            // 6. FAT Formatting in Cluster 4
+            val boot = createFatBootSector(diskSize / 512, label)
+            raf.seek(dataOffset)
             raf.write(boot)
 
-            // Initialize FAT tables (simplified: just first cluster)
+            val isFat32 = (diskSize / 512) > 1048576
             val fatInit = ByteArray(512)
-            fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0xFF.toByte()
-            raf.seek(firstClusterOffset + 512)
+            if (isFat32) {
+                fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0x0F.toByte()
+                fatInit[4] = 0xFF.toByte(); fatInit[5] = 0xFF.toByte(); fatInit[6] = 0xFF.toByte(); fatInit[7] = 0x0F.toByte()
+                fatInit[8] = 0xFF.toByte(); fatInit[9] = 0xFF.toByte(); fatInit[10] = 0xFF.toByte(); fatInit[11] = 0x0F.toByte()
+            } else {
+                fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0xFF.toByte()
+            }
+
+            val reservedSectors = if (isFat32) 32 else 1
+            raf.seek(dataOffset + reservedSectors.toLong() * 512)
             raf.write(fatInit) // FAT1
-            raf.seek(firstClusterOffset + (1 + ((diskSize / 512) / 4 * 2 / 512 + 1)) * 512)
-            raf.write(fatInit) // FAT2 (rough estimate)
+
+            raf.seek(dataOffset + clusterSize - 1)
+            raf.write(0)
 
         } finally { raf.close() }
     }
 
-    private fun createFat16BootSector(totalSectors: Long, label: String): ByteArray {
+    private fun createFatBootSector(totalSectors: Long, label: String): ByteArray {
         val boot = ByteArray(512)
         boot[0] = 0xEB.toByte(); boot[1] = 0x3C.toByte(); boot[2] = 0x90.toByte()
         System.arraycopy("MSDOS5.0".toByteArray(), 0, boot, 3, 8)
         putShortLE(boot, 11, 512)
-        boot[13] = 4
-        putShortLE(boot, 14, 1)
-        boot[16] = 2
-        putShortLE(boot, 17, 512)
-        if (totalSectors < 65536) putShortLE(boot, 19, totalSectors.toInt())
-        else putIntLE(boot, 32, totalSectors.toInt())
-        boot[21] = 0xF8.toByte()
-        val sectorsPerFat = ((totalSectors / 4) * 2 / 512 + 1).toInt()
-        putShortLE(boot, 22, sectorsPerFat)
-        boot[38] = 0x29.toByte()
-        System.arraycopy(label.uppercase().padEnd(11).toByteArray(), 0, boot, 43, 11)
-        System.arraycopy("FAT16   ".toByteArray(), 0, boot, 54, 8)
+
+        val spc = when {
+            totalSectors < 2048 -> 1
+            totalSectors < 8192 -> 2
+            totalSectors < 32768 -> 4
+            totalSectors < 262144 -> 8
+            totalSectors < 1048576 -> 16
+            else -> 32
+        }
+        boot[13] = spc.toByte()
+
+        val isFat32 = totalSectors > 1048576
+        if (!isFat32) {
+            putShortLE(boot, 14, 1)
+            boot[16] = 2
+            putShortLE(boot, 17, 512)
+            if (totalSectors < 65536) putShortLE(boot, 19, totalSectors.toInt())
+            else putIntLE(boot, 32, totalSectors.toInt())
+            boot[21] = 0xF8.toByte()
+            val sectorsPerFat = ((totalSectors / spc) * 2 / 512 + 1).toInt()
+            putShortLE(boot, 22, sectorsPerFat)
+            boot[38] = 0x29.toByte()
+            System.arraycopy(label.uppercase().padEnd(11).toByteArray(), 0, boot, 43, 11)
+            System.arraycopy("FAT16   ".toByteArray(), 0, boot, 54, 8)
+        } else {
+            putShortLE(boot, 14, 32)
+            boot[16] = 2
+            putShortLE(boot, 17, 0)
+            putShortLE(boot, 19, 0)
+            boot[21] = 0xF8.toByte()
+            putShortLE(boot, 22, 0)
+            putIntLE(boot, 32, totalSectors.toInt())
+            val sectorsPerFat = ((totalSectors / spc) * 4 / 512 + 1).toInt()
+            putIntLE(boot, 36, sectorsPerFat)
+            putIntLE(boot, 44, 2)
+            boot[66] = 0x29.toByte()
+            System.arraycopy(label.uppercase().padEnd(11).toByteArray(), 0, boot, 71, 11)
+            System.arraycopy("FAT32   ".toByteArray(), 0, boot, 82, 8)
+        }
         boot[510] = 0x55.toByte(); boot[511] = 0xAA.toByte()
         return boot
     }
@@ -1011,46 +1075,22 @@ object DiskImageUtils {
             val totalSectors = (sizeMB * 1024 * 1024 / 512).toLong()
             raf.setLength(totalSectors * 512)
 
-            // 1. Boot Sector (BPB)
-            val boot = ByteArray(512)
-            boot[0] = 0xEB.toByte(); boot[1] = 0x3C.toByte(); boot[2] = 0x90.toByte() // JMP
-            System.arraycopy("MSDOS5.0".toByteArray(), 0, boot, 3, 8)
-
-            putShortLE(boot, 11, 512) // Bytes per sector
-            boot[13] = 4 // Sectors per cluster
-            putShortLE(boot, 14, 1) // Reserved sectors
-            boot[16] = 2 // Number of FATs
-            putShortLE(boot, 17, 512) // Root entries
-
-            if (totalSectors < 65536) {
-                putShortLE(boot, 19, totalSectors.toInt())
-            } else {
-                putShortLE(boot, 19, 0)
-                putIntLE(boot, 32, totalSectors.toInt())
-            }
-
-            boot[21] = 0xF8.toByte() // Media descriptor
-
-            // Calculate FAT size
-            val sectorsPerFat = ((totalSectors / 4) * 2 / 512 + 1).toInt()
-            putShortLE(boot, 22, sectorsPerFat)
-
-            boot[38] = 0x29.toByte() // Signature
-            System.arraycopy(label.uppercase().padEnd(11).toByteArray(), 0, boot, 43, 11)
-            System.arraycopy("FAT16   ".toByteArray(), 0, boot, 54, 8)
-
-            boot[510] = 0x55.toByte(); boot[511] = 0xAA.toByte()
+            val boot = createFatBootSector(totalSectors, label)
             raf.seek(0)
             raf.write(boot)
 
-            // 2. Initialize FATs
+            val isFat32 = totalSectors > 1048576
+            val reservedSectors = if (isFat32) 32 else 1
             val fatInit = ByteArray(512)
-            fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0xFF.toByte()
+            if (isFat32) {
+                fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0x0F.toByte()
+                fatInit[4] = 0xFF.toByte(); fatInit[5] = 0xFF.toByte(); fatInit[6] = 0xFF.toByte(); fatInit[7] = 0x0F.toByte()
+                fatInit[8] = 0xFF.toByte(); fatInit[9] = 0xFF.toByte(); fatInit[10] = 0xFF.toByte(); fatInit[11] = 0x0F.toByte()
+            } else {
+                fatInit[0] = 0xF8.toByte(); fatInit[1] = 0xFF.toByte(); fatInit[2] = 0xFF.toByte(); fatInit[3] = 0xFF.toByte()
+            }
 
-            raf.seek(512) // FAT1 start
-            raf.write(fatInit)
-
-            raf.seek((1 + sectorsPerFat).toLong() * 512) // FAT2 start
+            raf.seek(reservedSectors.toLong() * 512)
             raf.write(fatInit)
 
         } finally { raf.close() }
