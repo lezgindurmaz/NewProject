@@ -31,13 +31,12 @@ object DiskImageUtils {
         private var virtualPos: Long = 0
         private val l2Cache = mutableMapOf<Long, LongArray>()
 
-        // Cache for the last read cluster to speed up consecutive small reads
         private var cachedClusterPos: Long = -1
         private val clusterBuffer: ByteArray
 
         init {
             raf.seek(0)
-            val header = ByteArray(72)
+            val header = ByteArray(104)
             raf.read(header)
             clusterBits = getIntBE(header, 20)
             clusterSize = 1 shl clusterBits
@@ -47,10 +46,17 @@ object DiskImageUtils {
 
             l1Table = LongArray(l1Size)
             raf.seek(l1TableOffset)
-            val l1Buf = ByteArray(l1Size * 8)
+            val l1Buf = ByteArray(Math.min(l1Size * 8, 1024 * 1024)) // Limit bulk read to 1MB
             raf.read(l1Buf)
-            for (i in 0 until l1Size) {
-                l1Table[i] = getLongBE(l1Buf, i * 8) and 0x3ffffffffffff000L
+            for (i in 0 until Math.min(l1Size, l1Buf.size / 8)) {
+                l1Table[i] = getLongBE(l1Buf, i * 8) and 0x00fffffffffff000L
+            }
+            // If L1 is larger than 1MB, read the rest individually or in chunks (unlikely for most mobile use cases)
+            if (l1Size * 8 > l1Buf.size) {
+                raf.seek(l1TableOffset + l1Buf.size)
+                for (i in (l1Buf.size / 8) until l1Size) {
+                    l1Table[i] = raf.readLong() and 0x00fffffffffff000L
+                }
             }
         }
 
@@ -104,7 +110,8 @@ object DiskImageUtils {
             if (l1Index >= l1Table.size || l1Table[l1Index] == 0L) return 0
 
             val l2TablePos = l1Table[l1Index]
-            val l2Table = l2Cache.getOrPut(l2TablePos) {
+            val l2Table = if (l2Cache.containsKey(l2TablePos)) l2Cache[l2TablePos]!! else {
+                if (l2Cache.size > 64) l2Cache.clear() // Simple cache eviction
                 val table = LongArray(l2Entries)
                 val buf = ByteArray(clusterSize)
                 raf.seek(l2TablePos)
@@ -112,11 +119,15 @@ object DiskImageUtils {
                 for (i in 0 until l2Entries) {
                     table[i] = getLongBE(buf, i * 8)
                 }
+                l2Cache[l2TablePos] = table
                 table
             }
             val entry = l2Table[l2Index]
-            if ((entry and (1L shl 62)) != 0L) return -1L // All zeros
-            return entry and 0x3ffffffffffff000L
+
+            if ((entry and 1L) != 0L) return -1L // All zeros (v3)
+            if ((entry and (1L shl 62)) != 0L) return -2L // Compressed (TODO: handle)
+
+            return entry and 0x00fffffffffff000L
         }
 
         override fun close() = raf.close()
@@ -933,23 +944,25 @@ object DiskImageUtils {
             val clusterSize = 1 shl clusterBits
             val diskSize = (sizeMB * 1024 * 1024).toLong()
 
-            // Layout:
-            // Cluster 0: Header (104 bytes) + L1 Table (at offset 1024)
+            // Strictly cluster-aligned layout:
+            // Cluster 0: Header
             // Cluster 1: Refcount Table
             // Cluster 2: Refcount Block 0
-            // Cluster 3: L2 Table 0
-            // Cluster 4: Data (Boot Sector + FAT)
+            // Cluster 3: L1 Table
+            // Cluster 4: L2 Table 0
+            // Cluster 5: Data Cluster 0 (Boot Sector)
 
             val l2Entries = clusterSize / 8
             val l1Size = ((diskSize / clusterSize) + l2Entries - 1) / l2Entries
-            val l1Offset = 1024L
+
             val reftableOffset = clusterSize.toLong()
             val refblockOffset = 2L * clusterSize
-            val l2Offset = 3L * clusterSize
-            val dataOffset = 4L * clusterSize
+            val l1Offset = 3L * clusterSize
+            val l2Offset = 4L * clusterSize
+            val dataOffset = 5L * clusterSize
 
             // 1. Header (v3)
-            val header = ByteArray(104)
+            val header = ByteArray(clusterSize)
             header[0] = 0x51; header[1] = 0x46; header[2] = 0x49; header[3] = 0xFB.toByte()
             putIntBE(header, 4, 3) // Version 3
             header[23] = clusterBits.toByte()
@@ -965,38 +978,34 @@ object DiskImageUtils {
             raf.seek(0)
             raf.write(header)
 
-            // 2. L1 Table (pointing to L2 Table 0)
-            raf.seek(l1Offset)
-            val l1Entry = l2Offset or (1L shl 63)
-            val l1Table = ByteArray(l1Size.toInt() * 8)
-            putLongBE(l1Table, 0, l1Entry)
-            raf.write(l1Table)
-
-            // 3. Refcount Table (pointing to Refcount Block 0)
-            raf.seek(reftableOffset)
-            val refEntry = refblockOffset or 0 // Refcount Table entries don't have a valid bit in v3? Actually they do (it's just offset)
+            // 2. Refcount Table (pointing to Refcount Block 0)
             val refTable = ByteArray(clusterSize)
             putLongBE(refTable, 0, refblockOffset)
+            raf.seek(reftableOffset)
             raf.write(refTable)
 
-            // 4. Refcount Block (Clusters 0, 1, 2, 3, 4 are used)
-            raf.seek(refblockOffset)
+            // 3. Refcount Block (Mark clusters 0-5 as used)
             val refBlock = ByteArray(clusterSize)
-            for (i in 0..4) {
-                // Refcount order 4 means 2 bytes per entry
+            for (i in 0..5) {
                 refBlock[i * 2] = 0
                 refBlock[i * 2 + 1] = 1
             }
+            raf.seek(refblockOffset)
             raf.write(refBlock)
 
-            // 5. L2 Table (pointing to data cluster 4)
-            raf.seek(l2Offset)
-            val l2Entry = dataOffset or (1L shl 63)
+            // 4. L1 Table (pointing to L2 Table 0)
+            val l1Table = ByteArray(clusterSize)
+            putLongBE(l1Table, 0, l2Offset or (1L shl 63))
+            raf.seek(l1Offset)
+            raf.write(l1Table)
+
+            // 5. L2 Table (pointing to data cluster 5)
             val l2Table = ByteArray(clusterSize)
-            putLongBE(l2Table, 0, l2Entry)
+            putLongBE(l2Table, 0, dataOffset or (1L shl 63))
+            raf.seek(l2Offset)
             raf.write(l2Table)
 
-            // 6. FAT Formatting in Cluster 4
+            // 6. FAT Formatting in Cluster 5
             val boot = createFatBootSector(diskSize / 512, label)
             raf.seek(dataOffset)
             raf.write(boot)
@@ -1015,6 +1024,7 @@ object DiskImageUtils {
             raf.seek(dataOffset + reservedSectors.toLong() * 512)
             raf.write(fatInit) // FAT1
 
+            // Ensure the file covers the last metadata/initial data cluster
             raf.seek(dataOffset + clusterSize - 1)
             raf.write(0)
 

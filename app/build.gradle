@@ -9,8 +9,8 @@ android {
         applicationId "com.lixoo.explorer"
         minSdk 26
         targetSdk 34
-        versionCode 33
-        versionName "20.0"
+        versionCode 34
+        versionName "21.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
