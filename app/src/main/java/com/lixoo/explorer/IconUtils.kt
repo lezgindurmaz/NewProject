@@ -5,20 +5,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.vector.ImageVector
 
 object IconUtils {
-    fun getIconForType(type: FileInspector.FileType, extension: String): ImageVector {
-        return when (type) {
-            FileInspector.FileType.IMAGE -> Icons.Default.Image
-            FileInspector.FileType.VIDEO -> Icons.Default.Movie
-            FileInspector.FileType.AUDIO -> Icons.Default.AudioFile
-            FileInspector.FileType.ARCHIVE -> Icons.Default.Inventory
-            FileInspector.FileType.DISK_IMAGE -> Icons.Default.Album
-            FileInspector.FileType.PDF -> Icons.Default.PictureAsPdf
-            FileInspector.FileType.TEXT -> Icons.Default.Description
-            FileInspector.FileType.HTML -> Icons.Default.Html
-            else -> getIconForExtension(extension)
-        }
-    }
-
     fun getIconForExtension(extension: String): ImageVector {
         return when (extension.lowercase()) {
             "jpg", "jpeg", "png", "webp", "gif", "bmp" -> Icons.Default.Image

@@ -124,7 +124,9 @@ class MainActivity : ComponentActivity() {
         prefs = getSharedPreferences("lixoo_prefs", Context.MODE_PRIVATE)
         loadSettings()
 
-        isRootAvailable = RootUtils.isRootAvailable()
+        lifecycleScope.launch {
+            isRootAvailable = withContext(Dispatchers.IO) { RootUtils.isRootAvailable() }
+        }
         checkPermissions()
         refreshFiles()
 
@@ -437,13 +439,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createFileItem(file: File): FileItem {
-        val type = FileInspector.getType(file)
         val ext = file.extension.lowercase()
-        val isArchive = type == FileInspector.FileType.ARCHIVE || type == FileInspector.FileType.DISK_IMAGE
-        val isText = type == FileInspector.FileType.TEXT || type == FileInspector.FileType.PDF
-        val isAudio = type == FileInspector.FileType.AUDIO
-        val isHtml = type == FileInspector.FileType.HTML
-        val icon = if (file.isDirectory) Icons.Default.Folder else IconUtils.getIconForType(type, ext)
+        val isArchive = ext in listOf("zip", "tar", "7z", "gz", "bz2", "xz", "lz4", "tgz", "tbz2", "iso", "img", "qcow2", "rar")
+        val isText = ext in listOf("txt", "log", "conf", "xml", "json", "sh", "prop", "pdf")
+        val isAudio = ext in listOf("mp3", "wav", "ogg", "m4a", "flac")
+        val isHtml = ext in listOf("html", "htm")
+        val icon = if (file.isDirectory) Icons.Default.Folder else IconUtils.getIconForExtension(ext)
 
         return FileItem(
             file.name, file.absolutePath, file.isDirectory, file.length(), file.lastModified(),

@@ -190,21 +190,78 @@ object DiskImageUtils {
         val b = ByteArray(512)
         disk.seek(0)
         if (disk.read(b, 0, 512) < 512) return -1L
+
+        // 1. Sector 0: Check if it's a BPB (Floppy or Unpartitioned Disk)
         if (isFatBPB(b)) return 0L
+
+        // 2. Sector 0: Check MBR (Master Boot Record)
         if (b[510] == 0x55.toByte() && b[511] == 0xAA.toByte()) {
             for (i in 0 until 4) {
                 val off = 446 + i * 16
                 val type = b[off + 4].toInt() and 0xFF
                 val startLBA = getIntLE(b, off + 8).toLong() and 0xFFFFFFFFL
-                if (startLBA > 0 && (type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0B || type == 0x0C || type == 0x0E)) {
+                if (startLBA > 0 && (type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0B || type == 0x0C || type == 0x0E || type == 0x07)) {
                     val pB = ByteArray(512)
                     disk.seek(startLBA * 512)
-                    disk.read(pB, 0, 512)
-                    if (isFatBPB(pB)) return startLBA * 512
+                    if (disk.read(pB, 0, 512) == 512 && isFatBPB(pB)) return startLBA * 512
+                }
+                // Check for GPT Protective MBR (Type 0xEE)
+                if (type == 0xEE) {
+                    val gptOffset = findFatOffsetInGPT(disk)
+                    if (gptOffset != -1L) return gptOffset
                 }
             }
         }
+
+        // Final fallback: Scan first 2048 sectors for a FAT signature (brute force)
+        for (s in 1..2048) {
+            disk.seek(s * 512L)
+            if (disk.read(b, 0, 512) < 512) break
+            if (isFatBPB(b)) return s * 512L
+        }
+
         return -1L
+    }
+
+    private fun findFatOffsetInGPT(disk: VirtualDisk): Long {
+        val b = ByteArray(512)
+        disk.seek(512) // LBA 1: GPT Header
+        if (disk.read(b, 0, 512) < 512) return -1L
+
+        val sig = String(b, 0, 8, Charset.forName("ASCII"))
+        if (sig != "EFI PART") return -1L
+
+        val partStartLBA = getLongLE(b, 72)
+        val partEntryCount = getIntLE(b, 80)
+        val partEntrySize = getIntLE(b, 84)
+
+        val entryBuf = ByteArray(partEntrySize)
+        for (i in 0 until partEntryCount) {
+            disk.seek(partStartLBA * 512 + i.toLong() * partEntrySize)
+            if (disk.read(entryBuf, 0, partEntrySize) < partEntrySize) break
+
+            // Check if partition is not empty (Type GUID is not all zeros)
+            var allZero = true
+            for (j in 0 until 16) if (entryBuf[j] != 0.toByte()) { allZero = false; break }
+            if (allZero) continue
+
+            val firstLBA = getLongLE(entryBuf, 32)
+            val pB = ByteArray(512)
+            disk.seek(firstLBA * 512)
+            if (disk.read(pB, 0, 512) == 512 && isFatBPB(pB)) return firstLBA * 512
+        }
+        return -1L
+    }
+
+    private fun getLongLE(b: ByteArray, off: Int): Long {
+        return (b[off].toLong() and 0xFF) or
+               ((b[off + 1].toLong() and 0xFF) shl 8) or
+               ((b[off + 2].toLong() and 0xFF) shl 16) or
+               ((b[off + 3].toLong() and 0xFF) shl 24) or
+               ((b[off + 4].toLong() and 0xFF) shl 32) or
+               ((b[off + 5].toLong() and 0xFF) shl 40) or
+               ((b[off + 6].toLong() and 0xFF) shl 48) or
+               ((b[off + 7].toLong() and 0xFF) shl 56)
     }
 
     private fun isFatBPB(b: ByteArray): Boolean {

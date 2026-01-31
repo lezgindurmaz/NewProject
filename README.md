@@ -11,9 +11,9 @@ Lixoo File Explorer, Android için geliştirilmiş, güçlü özelliklere sahip 
 - **Medya Oynatıcı ve Editör:** Dahili metin editörü, müzik çalar ve HTML görüntüleyici.
 - **Performans:** Büyük arşivler için optimize edilmiş klasör gezintisi ve duyarlı arama motoru.
 
-## Sürüm Notları (v22.0)
-- MBR desteği ile IMG/QCOW2 okuma iyileştirildi.
-- RAR (v4) desteği eklendi.
-- İçerik tabanlı dosya tanıma özelliği eklendi.
-- Arama UI hataları düzeltildi.
-- Arşiv gezinti performansı artırıldı.
+## Sürüm Notları (v23.0)
+- GPT (GUID Partition Table) desteği eklendi.
+- Büyük boyutlu disk kalıpları için okuma algoritması iyileştirildi.
+- Uygulama açılışında otomatik Root (süper kullanıcı) izni isteme özelliği eklendi.
+- Dosya uzantısına dayalı tanıma sistemine geri dönüldü (stabilite için).
+- Arşiv ve disk kalıbı okuma motorları optimize edildi.

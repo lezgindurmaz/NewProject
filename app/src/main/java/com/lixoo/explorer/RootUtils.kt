@@ -9,10 +9,7 @@ import java.io.InputStreamReader
 object RootUtils {
     fun isRootAvailable(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec("su")
-            val os = DataOutputStream(process.outputStream)
-            os.writeBytes("exit\n")
-            os.flush()
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
             process.waitFor() == 0
         } catch (e: Exception) {
             false
