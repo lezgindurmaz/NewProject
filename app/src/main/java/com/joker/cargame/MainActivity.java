@@ -36,6 +36,7 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
     private Vibrator vibrator;
     private Handler handler = new Handler();
     private int progressStatus = 0;
+    private boolean shouldShowCamera = false;
 
     private static final int PERMISSION_REQUEST_CODE = 100;
 
@@ -57,6 +58,9 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
 
         gameView.setOnGameEventListener(this);
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+
+        surfaceHolder = cameraPreview.getHolder();
+        surfaceHolder.addCallback(this);
 
         requestPermissions();
         hideSystemUI();
@@ -179,9 +183,13 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
     }
 
     private void showCameraPreview() {
-        cameraContainer.setVisibility(View.VISIBLE);
-        surfaceHolder = cameraPreview.getHolder();
-        surfaceHolder.addCallback(this);
+        runOnUiThread(() -> {
+            shouldShowCamera = true;
+            cameraContainer.setVisibility(View.VISIBLE);
+            if (surfaceHolder.getSurface().isValid()) {
+                startCamera(surfaceHolder);
+            }
+        });
     }
 
     private void vibrate(long duration) {
@@ -197,14 +205,24 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
 
     @Override
     public void surfaceCreated(@NonNull SurfaceHolder holder) {
+        if (shouldShowCamera) {
+            startCamera(holder);
+        }
+    }
+
+    private void startCamera(SurfaceHolder holder) {
+        if (camera != null) return;
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             try {
                 camera = openFrontCamera();
-                camera.setDisplayOrientation(90);
-                camera.setPreviewDisplay(holder);
-                camera.startPreview();
+                if (camera != null) {
+                    camera.setDisplayOrientation(90);
+                    camera.setPreviewDisplay(holder);
+                    camera.startPreview();
+                }
             } catch (Exception e) {
                 e.printStackTrace();
+                Toast.makeText(this, "Kamera hatası: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         }
     }

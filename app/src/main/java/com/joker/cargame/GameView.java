@@ -169,19 +169,26 @@ public class GameView extends View {
         // Check if the last obstacle is far enough to avoid blocking everything or overlapping
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            if (last.top < 400) return; // Wait until last car moves down
+            // Reduced gap from 400 to 250 for higher density
+            if (last.top < 250) return;
         }
 
-        // Choose 1 or 2 lanes out of 3 to always leave 1 open
-        int emptyLane = random.nextInt(3);
-        for (int lane = 0; lane < 3; lane++) {
-            if (lane != emptyLane) {
-                // Occasional skip even in "non-empty" lanes for better spacing
-                if (random.nextBoolean()) {
-                    int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
-                    obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
-                }
-            }
+        // Determine how many lanes to fill (1 or 2)
+        int fillCount = random.nextInt(2) + 1; // 1 or 2
+
+        // Randomly pick which lanes to fill
+        List<Integer> availableLanes = new ArrayList<>();
+        availableLanes.add(0);
+        availableLanes.add(1);
+        availableLanes.add(2);
+
+        for (int i = 0; i < fillCount; i++) {
+            int index = random.nextInt(availableLanes.size());
+            int lane = availableLanes.remove(index);
+
+            int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
+            // Spawn slightly off-screen
+            obstacles.add(new Rect(x, -playerHeight - 100, x + playerWidth, -100));
         }
     }
 
