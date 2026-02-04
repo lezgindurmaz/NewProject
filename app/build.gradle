@@ -2,10 +2,10 @@ plugins {
     id 'com.android.application'
 }
 android {
-    namespace 'com.example.rootdetector'
+    namespace 'com.joker.cargame'
     compileSdkVersion 34
     defaultConfig {
-        applicationId "com.example.rootdetector"
+        applicationId "com.joker.cargame"
         minSdkVersion 21
         targetSdkVersion 34
         versionCode 1
