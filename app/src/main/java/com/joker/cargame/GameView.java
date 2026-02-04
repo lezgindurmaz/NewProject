@@ -32,6 +32,7 @@ public class GameView extends View {
     private int roadWidth;
     private int roadLeft;
     private int laneWidth;
+    private int safeLaneCycle = 0;
 
     public interface OnGameEventListener {
         void onPrankTrigger();
@@ -166,29 +167,23 @@ public class GameView extends View {
     }
 
     private void spawnObstacle() {
-        // Check if the last obstacle is far enough to avoid blocking everything or overlapping
+        // Check if the last obstacle is far enough
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            // Reduced gap from 400 to 250 for higher density
-            if (last.top < 250) return;
+            // Even higher density
+            if (last.top < 180) return;
         }
 
-        // Determine how many lanes to fill (1 or 2)
-        int fillCount = random.nextInt(2) + 1; // 1 or 2
+        // Force cycling the "safe" lane to ensure all lanes get blocked regularly
+        int safeLane = safeLaneCycle % 3;
+        safeLaneCycle++;
 
-        // Randomly pick which lanes to fill
-        List<Integer> availableLanes = new ArrayList<>();
-        availableLanes.add(0);
-        availableLanes.add(1);
-        availableLanes.add(2);
-
-        for (int i = 0; i < fillCount; i++) {
-            int index = random.nextInt(availableLanes.size());
-            int lane = availableLanes.remove(index);
-
-            int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
-            // Spawn slightly off-screen
-            obstacles.add(new Rect(x, -playerHeight - 100, x + playerWidth, -100));
+        for (int lane = 0; lane < 3; lane++) {
+            if (lane != safeLane) {
+                int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
+                // Spawn slightly off-screen
+                obstacles.add(new Rect(x, -playerHeight - 100, x + playerWidth, -100));
+            }
         }
     }
 

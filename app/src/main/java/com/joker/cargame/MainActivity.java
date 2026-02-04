@@ -210,21 +210,31 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
         }
     }
 
-    private void startCamera(SurfaceHolder holder) {
-        if (camera != null) return;
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+    private void startCamera(final SurfaceHolder holder) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        new Thread(() -> {
             try {
-                camera = openFrontCamera();
+                if (camera == null) {
+                    camera = openFrontCamera();
+                }
+
                 if (camera != null) {
+                    camera.stopPreview();
                     camera.setDisplayOrientation(90);
                     camera.setPreviewDisplay(holder);
                     camera.startPreview();
+
+                    // Force a small update to the UI to ensure the surface is rendered
+                    runOnUiThread(() -> cameraPreview.invalidate());
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                Toast.makeText(this, "Kamera hatası: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Kamera hatası: " + e.getMessage(), Toast.LENGTH_SHORT).show());
             }
-        }
+        }).start();
     }
 
     private Camera openFrontCamera() {
