@@ -90,4 +90,23 @@
 
     </LinearLayout>
 
+    <FrameLayout
+        android:id="@+id/jumpscareLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/jumpscareText"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:text="HACKED"
+            android:textColor="#FF0000"
+            android:textSize="80sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:fontFamily="monospace" />
+    </FrameLayout>
+
 </FrameLayout>

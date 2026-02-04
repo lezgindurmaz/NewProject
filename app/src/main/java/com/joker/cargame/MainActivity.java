@@ -3,8 +3,8 @@ package com.joker.cargame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.hardware.Camera;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Vibrator;
@@ -22,14 +22,13 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import java.io.IOException;
-
 public class MainActivity extends AppCompatActivity implements GameView.OnGameEventListener, SurfaceHolder.Callback {
 
     private GameView gameView;
     private LinearLayout prankLayout;
+    private View jumpscareLayout;
     private ProgressBar prankProgress;
-    private TextView prankStatus, prankMessage;
+    private TextView prankStatus, prankMessage, jumpscareText;
     private View cameraContainer;
     private SurfaceView cameraPreview;
     private SurfaceHolder surfaceHolder;
@@ -43,25 +42,23 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // Full screen
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         setContentView(R.layout.activity_main);
 
         gameView = findViewById(R.id.gameView);
         prankLayout = findViewById(R.id.prankLayout);
+        jumpscareLayout = findViewById(R.id.jumpscareLayout);
         prankProgress = findViewById(R.id.prankProgress);
         prankStatus = findViewById(R.id.prankStatus);
         prankMessage = findViewById(R.id.prankMessage);
         cameraContainer = findViewById(R.id.cameraContainer);
         cameraPreview = findViewById(R.id.cameraPreview);
+        jumpscareText = findViewById(R.id.jumpscareText);
 
         gameView.setOnGameEventListener(this);
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
 
         requestPermissions();
-
-        // Hide navigation bar and status bar
         hideSystemUI();
     }
 
@@ -105,8 +102,12 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
         });
     }
 
+    @Override
+    public void onGameOver() {
+        triggerJumpscare();
+    }
+
     private void startPrankSequence() {
-        // Start fake progress
         new Thread(() -> {
             while (progressStatus < 100) {
                 progressStatus += 1;
@@ -137,7 +138,7 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
                     }
                 });
                 try {
-                    Thread.sleep(200);
+                    Thread.sleep(150);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -145,8 +146,36 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
             handler.post(() -> {
                 prankStatus.setText("TÜM DOSYALAR ŞİFRELENDİ VE BULUTA YÜKLENDİ.");
                 vibrate(2000);
+                handler.postDelayed(this::triggerJumpscare, 1000);
             });
         }).start();
+    }
+
+    private void triggerJumpscare() {
+        runOnUiThread(() -> {
+            gameView.setVisibility(View.GONE);
+            prankLayout.setVisibility(View.GONE);
+            jumpscareLayout.setVisibility(View.VISIBLE);
+
+            new Thread(() -> {
+                String[] scaryTexts = {"HACKED", "IZLENIYORSUN", "GEÇMİŞ OLSUN", "RUHUNU SATIN ALDIM"};
+                for (int i = 0; i < 40; i++) {
+                    final int color = (i % 2 == 0) ? Color.RED : (i % 3 == 0 ? Color.WHITE : Color.BLACK);
+                    final String text = scaryTexts[i % scaryTexts.length];
+                    handler.post(() -> {
+                        jumpscareLayout.setBackgroundColor(color);
+                        jumpscareText.setText(text);
+                        jumpscareText.setTextColor(color == Color.RED ? Color.BLACK : Color.RED);
+                    });
+                    vibrate(50);
+                    try { Thread.sleep(70); } catch (InterruptedException e) {}
+                }
+                handler.post(() -> {
+                    finishAffinity();
+                    System.exit(0);
+                });
+            }).start();
+        });
     }
 
     private void showCameraPreview() {
@@ -163,7 +192,6 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
 
     @Override
     public void onBackPressed() {
-        // Do nothing to prevent exit
         Toast.makeText(this, "SİSTEM KİLİTLENDİ. ÇIKIŞ YAPILAMAZ.", Toast.LENGTH_SHORT).show();
     }
 
@@ -171,13 +199,26 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
     public void surfaceCreated(@NonNull SurfaceHolder holder) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             try {
-                camera = Camera.open();
+                camera = openFrontCamera();
+                camera.setDisplayOrientation(90);
                 camera.setPreviewDisplay(holder);
                 camera.startPreview();
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    private Camera openFrontCamera() {
+        int cameraCount = Camera.getNumberOfCameras();
+        Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+        for (int i = 0; i < cameraCount; i++) {
+            Camera.getCameraInfo(i, cameraInfo);
+            if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                return Camera.open(i);
+            }
+        }
+        return Camera.open(0);
     }
 
     @Override

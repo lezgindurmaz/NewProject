@@ -18,17 +18,24 @@ public class GameView extends View {
     private int playerX, playerY, playerWidth, playerHeight;
     private int screenWidth, screenHeight;
     private List<Rect> obstacles;
-    private int score = 0;
+    private int score = 10; // Start with some score to avoid immediate game over
     private int level = 1;
+    private final int MAX_LEVEL = 10;
     private boolean prankTriggered = false;
+    private boolean isGameOver = false;
     private Random random;
     private long startTime;
     private OnGameEventListener listener;
     private int offset = 0;
     private int speed = 15;
 
+    private int roadWidth;
+    private int roadLeft;
+    private int laneWidth;
+
     public interface OnGameEventListener {
         void onPrankTrigger();
+        void onGameOver();
     }
 
     public void setOnGameEventListener(OnGameEventListener listener) {
@@ -42,16 +49,16 @@ public class GameView extends View {
 
     private void init() {
         playerPaint = new Paint();
-        playerPaint.setColor(Color.parseColor("#E91E63")); // Stylish Pink/Red
+        playerPaint.setColor(Color.parseColor("#E91E63"));
 
         obstaclePaint = new Paint();
-        obstaclePaint.setColor(Color.parseColor("#3F51B5")); // Stylish Blue
+        obstaclePaint.setColor(Color.parseColor("#3F51B5"));
 
         roadPaint = new Paint();
-        roadPaint.setColor(Color.parseColor("#424242")); // Dark Gray
+        roadPaint.setColor(Color.parseColor("#424242"));
 
         grassPaint = new Paint();
-        grassPaint.setColor(Color.parseColor("#4CAF50")); // Green
+        grassPaint.setColor(Color.parseColor("#4CAF50"));
 
         linePaint = new Paint();
         linePaint.setColor(Color.WHITE);
@@ -76,6 +83,10 @@ public class GameView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         screenWidth = w;
         screenHeight = h;
+        roadWidth = (int) (screenWidth * 0.8);
+        roadLeft = (screenWidth - roadWidth) / 2;
+        laneWidth = roadWidth / 3;
+
         playerX = screenWidth / 2 - playerWidth / 2;
         playerY = screenHeight - playerHeight - 200;
     }
@@ -84,16 +95,13 @@ public class GameView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        if (prankTriggered) return;
+        if (prankTriggered || isGameOver) return;
 
         // Draw Grass
         canvas.drawRect(0, 0, screenWidth, screenHeight, grassPaint);
 
-        // Draw Road (centered, 80% of width)
-        int roadWidth = (int) (screenWidth * 0.8);
-        int roadLeft = (screenWidth - roadWidth) / 2;
-        int roadRight = roadLeft + roadWidth;
-        canvas.drawRect(roadLeft, 0, roadRight, screenHeight, roadPaint);
+        // Draw Road
+        canvas.drawRect(roadLeft, 0, roadLeft + roadWidth, screenHeight, roadPaint);
 
         // Draw Animated Lane markings
         offset += speed;
@@ -103,10 +111,10 @@ public class GameView extends View {
             canvas.drawRect(screenWidth/2 - 10, i, screenWidth/2 + 10, i + 100, linePaint);
         }
 
-        // Draw Player Car (more detailed)
+        // Draw Player Car
         drawCar(canvas, playerX, playerY, playerWidth, playerHeight, playerPaint);
 
-        // Draw Obstacles (Iterate backwards to safely remove items)
+        // Draw and Update Obstacles
         for (int i = obstacles.size() - 1; i >= 0; i--) {
             Rect obstacle = obstacles.get(i);
             drawCar(canvas, obstacle.left, obstacle.top, obstacle.width(), obstacle.height(), obstaclePaint);
@@ -116,21 +124,26 @@ public class GameView extends View {
 
             if (Rect.intersects(obstacle, new Rect(playerX, playerY, playerX + playerWidth, playerY + playerHeight))) {
                 obstacles.remove(i);
-                score = Math.max(0, score - 2);
-                vibrate(100);
+                score -= 10;
+                vibrate(300);
+                if (score < 0) {
+                    isGameOver = true;
+                    if (listener != null) listener.onGameOver();
+                    return;
+                }
             } else if (obstacle.top > screenHeight) {
                 obstacles.remove(i);
                 score++;
-                if (score > 0 && score % 10 == 0) {
+                if (score > 0 && score % 10 == 0 && level < MAX_LEVEL) {
                     level++;
                     speed += 2;
                 }
             }
         }
 
-        if (random.nextInt(100) < (3 + level)) {
-            int obsX = roadLeft + random.nextInt(roadWidth - playerWidth);
-            obstacles.add(new Rect(obsX, -200, obsX + playerWidth, 0));
+        // Improved Obstacle Spawning
+        if (random.nextInt(100) < (5 + level)) {
+            spawnObstacle();
         }
 
         // UI
@@ -152,15 +165,32 @@ public class GameView extends View {
         invalidate();
     }
 
+    private void spawnObstacle() {
+        // Check if the last obstacle is far enough to avoid blocking everything or overlapping
+        if (!obstacles.isEmpty()) {
+            Rect last = obstacles.get(obstacles.size() - 1);
+            if (last.top < 400) return; // Wait until last car moves down
+        }
+
+        // Choose 1 or 2 lanes out of 3 to always leave 1 open
+        int emptyLane = random.nextInt(3);
+        for (int lane = 0; lane < 3; lane++) {
+            if (lane != emptyLane) {
+                // Occasional skip even in "non-empty" lanes for better spacing
+                if (random.nextBoolean()) {
+                    int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
+                    obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
+                }
+            }
+        }
+    }
+
     private void drawCar(Canvas canvas, int x, int y, int w, int h, Paint p) {
-        // Body
         canvas.drawRect(x, y, x + w, y + h, p);
-        // Windows
         Paint windowPaint = new Paint();
         windowPaint.setColor(Color.LTGRAY);
         canvas.drawRect(x + 10, y + 30, x + w - 10, y + 60, windowPaint);
         canvas.drawRect(x + 10, y + h - 50, x + w - 10, y + h - 20, windowPaint);
-        // Tires
         Paint tirePaint = new Paint();
         tirePaint.setColor(Color.BLACK);
         canvas.drawRect(x - 5, y + 20, x, y + 60, tirePaint);
@@ -180,11 +210,8 @@ public class GameView extends View {
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_MOVE || event.getAction() == MotionEvent.ACTION_DOWN) {
             playerX = (int) event.getX() - playerWidth / 2;
-            int roadWidth = (int) (screenWidth * 0.8);
-            int roadLeft = (screenWidth - roadWidth) / 2;
-            int roadRight = roadLeft + roadWidth;
             if (playerX < roadLeft) playerX = roadLeft;
-            if (playerX > roadRight - playerWidth) playerX = roadRight - playerWidth;
+            if (playerX > roadLeft + roadWidth - playerWidth) playerX = roadLeft + roadWidth - playerWidth;
         }
         return true;
     }
