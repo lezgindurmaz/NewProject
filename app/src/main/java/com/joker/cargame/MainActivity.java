@@ -212,14 +212,24 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
                 camera.takePicture(null, null, (data, cam) -> {
                     saveImageToGallery(data);
                     runOnUiThread(() -> {
-                        prankMessage.setText("HEDEF TESPİT EDİLDİ VE GALERİYE KAYDEDİLDİ!\nSistem artık seni tanıyor.");
-                        Toast.makeText(MainActivity.this, "FOTOĞRAF ÇEKİLDİ VE GALERİYE KAYDEDİLDİ!", Toast.LENGTH_LONG).show();
+                        prankMessage.setText("HEDEF TESPİT EDİLDİ VE GALERİYE KAYDEDİLDİ!\nŞİMDİ GALERİNE BAK VE KORK!");
+                        Toast.makeText(MainActivity.this, "HEDEF TESPİT EDİLDİ! GALERİNE BAK!", Toast.LENGTH_LONG).show();
                     });
-                    cam.startPreview();
+                    try {
+                        cam.startPreview();
+                    } catch (Exception e) {}
                 });
             } catch (Exception e) {
                 e.printStackTrace();
+                // If taking picture fails, at least show the scary message
+                runOnUiThread(() -> {
+                    prankMessage.setText("SİSTEME KAYDEDİLDİN!\nTÜM VERİLERİN ELİMİZDE.");
+                });
             }
+        } else {
+             runOnUiThread(() -> {
+                prankMessage.setText("SİSTEME KAYDEDİLDİN!\nTAKİP EDİLİYORSUN.");
+            });
         }
     }
 

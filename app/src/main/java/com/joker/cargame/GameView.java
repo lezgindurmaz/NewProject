@@ -18,7 +18,7 @@ public class GameView extends View {
     private int playerX, playerY, playerWidth, playerHeight;
     private int screenWidth, screenHeight;
     private List<Rect> obstacles;
-    private int score = 10; // Start with some score to avoid immediate game over
+    private int score = 50; // Increased to prevent immediate game over
     private int level = 1;
     private final int MAX_LEVEL = 10;
     private boolean prankTriggered = false;
@@ -84,7 +84,7 @@ public class GameView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         screenWidth = w;
         screenHeight = h;
-        roadWidth = (int) (screenWidth * 0.9); // Wider road for better lane filling
+        roadWidth = (int) (screenWidth * 0.8);
         roadLeft = (screenWidth - roadWidth) / 2;
         laneWidth = roadWidth / 3;
 
@@ -167,30 +167,21 @@ public class GameView extends View {
     }
 
     private void spawnObstacle() {
-        // Check if the last obstacle is far enough
+        // Ensure some vertical gap for playability
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            // High density
-            if (last.top < 200) return;
+            if (last.top < 350) return;
         }
 
-        // Ensure we always block the lanes in a way that forces movement
-        // We will fill 2 out of 3 lanes.
-        int safeLane = random.nextInt(3);
-
-        // However, if the user mentioned the left lane (lane 0) specifically,
-        // let's ensure it's blocked very frequently.
-        if (safeLaneCycle % 5 == 0) {
-            safeLane = 1 + random.nextInt(2); // Block lane 0 (Left)
-        }
+        // Strict cycling of the safe lane (0, 1, 2) ensures no lane is left unblocked
+        int safeLane = safeLaneCycle % 3;
         safeLaneCycle++;
 
         for (int lane = 0; lane < 3; lane++) {
             if (lane != safeLane) {
-                // Make obstacle slightly wider than laneWidth / 1.5 to fill more space
-                int obsWidth = (int) (laneWidth * 0.85);
-                int x = roadLeft + lane * laneWidth + (laneWidth - obsWidth) / 2;
-                obstacles.add(new Rect(x, -playerHeight - 100, x + obsWidth, -100));
+                int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
+                // Old cars style spawn
+                obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
             }
         }
     }
