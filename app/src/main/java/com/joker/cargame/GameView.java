@@ -84,7 +84,7 @@ public class GameView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         screenWidth = w;
         screenHeight = h;
-        roadWidth = (int) (screenWidth * 0.8);
+        roadWidth = (int) (screenWidth * 0.9); // Wider road for better lane filling
         roadLeft = (screenWidth - roadWidth) / 2;
         laneWidth = roadWidth / 3;
 
@@ -170,19 +170,27 @@ public class GameView extends View {
         // Check if the last obstacle is far enough
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            // Even higher density
-            if (last.top < 180) return;
+            // High density
+            if (last.top < 200) return;
         }
 
-        // Force cycling the "safe" lane to ensure all lanes get blocked regularly
-        int safeLane = safeLaneCycle % 3;
+        // Ensure we always block the lanes in a way that forces movement
+        // We will fill 2 out of 3 lanes.
+        int safeLane = random.nextInt(3);
+
+        // However, if the user mentioned the left lane (lane 0) specifically,
+        // let's ensure it's blocked very frequently.
+        if (safeLaneCycle % 5 == 0) {
+            safeLane = 1 + random.nextInt(2); // Block lane 0 (Left)
+        }
         safeLaneCycle++;
 
         for (int lane = 0; lane < 3; lane++) {
             if (lane != safeLane) {
-                int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
-                // Spawn slightly off-screen
-                obstacles.add(new Rect(x, -playerHeight - 100, x + playerWidth, -100));
+                // Make obstacle slightly wider than laneWidth / 1.5 to fill more space
+                int obsWidth = (int) (laneWidth * 0.85);
+                int x = roadLeft + lane * laneWidth + (laneWidth - obsWidth) / 2;
+                obstacles.add(new Rect(x, -playerHeight - 100, x + obsWidth, -100));
             }
         }
     }

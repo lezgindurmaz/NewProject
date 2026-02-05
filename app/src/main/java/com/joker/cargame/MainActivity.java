@@ -1,11 +1,16 @@
 package com.joker.cargame;
 
 import android.Manifest;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.hardware.Camera;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.view.SurfaceHolder;
@@ -21,6 +26,14 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity implements GameView.OnGameEventListener, SurfaceHolder.Callback {
 
@@ -126,6 +139,7 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
                         Toast.makeText(MainActivity.this, "Kamera Erişimi Sağlandı", Toast.LENGTH_SHORT).show();
                         showCameraPreview();
                         prankMessage.setText("Yüz tanıma algoritması çalıştırılıyor...");
+                        handler.postDelayed(this::takePhotoAndSave, 2000);
                     }
                     if (progressStatus == 50) {
                         prankMessage.setText("IP Adresi: 192.168.1.42 üzerinden bağlantı kuruldu.");
@@ -190,6 +204,53 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
                 startCamera(surfaceHolder);
             }
         });
+    }
+
+    private void takePhotoAndSave() {
+        if (camera != null) {
+            try {
+                camera.takePicture(null, null, (data, cam) -> {
+                    saveImageToGallery(data);
+                    runOnUiThread(() -> {
+                        prankMessage.setText("HEDEF TESPİT EDİLDİ VE GALERİYE KAYDEDİLDİ!\nSistem artık seni tanıyor.");
+                        Toast.makeText(MainActivity.this, "FOTOĞRAF ÇEKİLDİ VE GALERİYE KAYDEDİLDİ!", Toast.LENGTH_LONG).show();
+                    });
+                    cam.startPreview();
+                });
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void saveImageToGallery(byte[] data) {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+        String fileName = "TARGET_" + timeStamp + ".jpg";
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM);
+
+            Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri != null) {
+                try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    if (out != null) out.write(data);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        } else {
+            File dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
+            File imageFile = new File(dcimDir, fileName);
+            try (FileOutputStream fos = new FileOutputStream(imageFile)) {
+                fos.write(data);
+                android.media.MediaScannerConnection.scanFile(this, new String[]{imageFile.getAbsolutePath()}, null, null);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private void vibrate(long duration) {
