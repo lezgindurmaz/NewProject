@@ -170,19 +170,29 @@ public class GameView extends View {
         // Ensure some vertical gap for playability
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            if (last.top < 350) return;
+            // Dynamic gap based on level but with a safe minimum
+            int minGap = 350 - (level * 10);
+            if (last.top < minGap) return;
         }
 
-        // Strict cycling of the safe lane (0, 1, 2) ensures no lane is left unblocked
-        int safeLane = safeLaneCycle % 3;
-        safeLaneCycle++;
+        // Randomly pick which lanes to block (at least one lane MUST be safe)
+        int safeLane = random.nextInt(3);
 
-        for (int lane = 0; lane < 3; lane++) {
-            if (lane != safeLane) {
-                int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
-                // Old cars style spawn
-                obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
+        // Sometimes only spawn one car instead of two for more variety
+        boolean spawnTwo = random.nextInt(10) < 7; // 70% chance of 2 cars, 30% of 1 car
+
+        if (spawnTwo) {
+            for (int lane = 0; lane < 3; lane++) {
+                if (lane != safeLane) {
+                    int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
+                    obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
+                }
             }
+        } else {
+            // Pick one lane to block that isn't the safe lane
+            int blockLane = (safeLane + 1 + random.nextInt(2)) % 3;
+            int x = roadLeft + blockLane * laneWidth + (laneWidth - playerWidth) / 2;
+            obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
         }
     }
 

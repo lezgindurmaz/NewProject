@@ -4,7 +4,10 @@ import android.Manifest;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.hardware.Camera;
 import android.net.Uri;
 import android.os.Build;
@@ -27,6 +30,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -210,18 +214,22 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
         if (camera != null) {
             try {
                 camera.takePicture(null, null, (data, cam) -> {
-                    saveImageToGallery(data);
-                    runOnUiThread(() -> {
-                        prankMessage.setText("HEDEF TESPİT EDİLDİ VE GALERİYE KAYDEDİLDİ!\nŞİMDİ GALERİNE BAK VE KORK!");
-                        Toast.makeText(MainActivity.this, "HEDEF TESPİT EDİLDİ! GALERİNE BAK!", Toast.LENGTH_LONG).show();
-                    });
+                    // Process data in a background thread to rotate it
+                    new Thread(() -> {
+                        byte[] rotatedData = rotateImage(data, 270); // 270 for front camera portrait
+                        saveImageToGallery(rotatedData);
+                        runOnUiThread(() -> {
+                            prankMessage.setText("HEDEF TESPİT EDİLDİ VE GALERİYE KAYDEDİLDİ!\nŞİMDİ GALERİNE BAK VE KORK!");
+                            Toast.makeText(MainActivity.this, "HEDEF TESPİT EDİLDİ! GALERİNE BAK!", Toast.LENGTH_LONG).show();
+                        });
+                    }).start();
+
                     try {
                         cam.startPreview();
                     } catch (Exception e) {}
                 });
             } catch (Exception e) {
                 e.printStackTrace();
-                // If taking picture fails, at least show the scary message
                 runOnUiThread(() -> {
                     prankMessage.setText("SİSTEME KAYDEDİLDİN!\nTÜM VERİLERİN ELİMİZDE.");
                 });
@@ -230,6 +238,26 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
              runOnUiThread(() -> {
                 prankMessage.setText("SİSTEME KAYDEDİLDİN!\nTAKİP EDİLİYORSUN.");
             });
+        }
+    }
+
+    private byte[] rotateImage(byte[] data, int degrees) {
+        try {
+            Bitmap source = BitmapFactory.decodeByteArray(data, 0, data.length);
+            Matrix matrix = new Matrix();
+            matrix.postRotate(degrees);
+            // Mirroring for front camera
+            matrix.postScale(-1, 1, source.getWidth() / 2f, source.getHeight() / 2f);
+
+            Bitmap rotated = Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            rotated.compress(Bitmap.CompressFormat.JPEG, 90, out);
+            source.recycle();
+            rotated.recycle();
+            return out.toByteArray();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return data;
         }
     }
 
