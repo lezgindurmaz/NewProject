@@ -16,6 +16,7 @@ import java.util.Random;
 public class GameView extends View {
     private Paint playerPaint, obstaclePaint, roadPaint, textPaint, grassPaint, linePaint;
     private int playerX, playerY, playerWidth, playerHeight;
+    private int obstacleWidth, obstacleHeight;
     private int screenWidth, screenHeight;
     private List<Rect> obstacles;
     private int score = 50; // Increased to prevent immediate game over
@@ -75,8 +76,10 @@ public class GameView extends View {
         random = new Random();
         startTime = System.currentTimeMillis();
 
-        playerWidth = 100;
-        playerHeight = 180;
+        playerWidth = 110;
+        playerHeight = 200;
+        obstacleWidth = 160;
+        obstacleHeight = 280;
     }
 
     @Override
@@ -118,7 +121,7 @@ public class GameView extends View {
         // Draw and Update Obstacles
         for (int i = obstacles.size() - 1; i >= 0; i--) {
             Rect obstacle = obstacles.get(i);
-            drawCar(canvas, obstacle.left, obstacle.top, obstacle.width(), obstacle.height(), obstaclePaint);
+            drawCar(canvas, obstacle.left, obstacle.top, obstacleWidth, obstacleHeight, obstaclePaint);
 
             obstacle.top += speed;
             obstacle.bottom += speed;
@@ -184,30 +187,38 @@ public class GameView extends View {
         if (spawnTwo) {
             for (int lane = 0; lane < 3; lane++) {
                 if (lane != safeLane) {
-                    int x = roadLeft + lane * laneWidth + (laneWidth - playerWidth) / 2;
-                    obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
+                    int x = roadLeft + lane * laneWidth + (laneWidth - obstacleWidth) / 2;
+                    obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
                 }
             }
         } else {
             // Pick one lane to block that isn't the safe lane
             int blockLane = (safeLane + 1 + random.nextInt(2)) % 3;
-            int x = roadLeft + blockLane * laneWidth + (laneWidth - playerWidth) / 2;
-            obstacles.add(new Rect(x, -playerHeight - 50, x + playerWidth, -50));
+            int x = roadLeft + blockLane * laneWidth + (laneWidth - obstacleWidth) / 2;
+            obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
         }
     }
 
     private void drawCar(Canvas canvas, int x, int y, int w, int h, Paint p) {
+        // Body
         canvas.drawRect(x, y, x + w, y + h, p);
+
+        // Windows (proportional)
         Paint windowPaint = new Paint();
         windowPaint.setColor(Color.LTGRAY);
-        canvas.drawRect(x + 10, y + 30, x + w - 10, y + 60, windowPaint);
-        canvas.drawRect(x + 10, y + h - 50, x + w - 10, y + h - 20, windowPaint);
+        int margin = w / 10;
+        canvas.drawRect(x + margin, y + h / 6, x + w - margin, y + h / 3, windowPaint);
+        canvas.drawRect(x + margin, y + 2 * h / 3, x + w - margin, y + 5 * h / 6, windowPaint);
+
+        // Tires (proportional)
         Paint tirePaint = new Paint();
         tirePaint.setColor(Color.BLACK);
-        canvas.drawRect(x - 5, y + 20, x, y + 60, tirePaint);
-        canvas.drawRect(x + w, y + 20, x + w + 5, y + 60, tirePaint);
-        canvas.drawRect(x - 5, y + h - 60, x, y + h - 20, tirePaint);
-        canvas.drawRect(x + w, y + h - 60, x + w + 5, y + h - 20, tirePaint);
+        int tireWidth = w / 10;
+        int tireHeight = h / 5;
+        canvas.drawRect(x - tireWidth, y + h / 10, x, y + h / 10 + tireHeight, tirePaint);
+        canvas.drawRect(x + w, y + h / 10, x + w + tireWidth, y + h / 10 + tireHeight, tirePaint);
+        canvas.drawRect(x - tireWidth, y + h - h / 10 - tireHeight, x, y + h - h / 10, tirePaint);
+        canvas.drawRect(x + w, y + h - h / 10 - tireHeight, x + w + tireWidth, y + h - h / 10, tirePaint);
     }
 
     private void vibrate(long duration) {
