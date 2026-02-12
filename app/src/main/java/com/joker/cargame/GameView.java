@@ -33,7 +33,7 @@ public class GameView extends View {
     private int roadWidth;
     private int roadLeft;
     private int laneWidth;
-    private int safeLaneCycle = 0;
+    private int numLanes;
 
     public interface OnGameEventListener {
         void onPrankTrigger();
@@ -76,10 +76,10 @@ public class GameView extends View {
         random = new Random();
         startTime = System.currentTimeMillis();
 
-        playerWidth = 110;
-        playerHeight = 200;
-        obstacleWidth = 160;
-        obstacleHeight = 280;
+        playerWidth = 100;
+        playerHeight = 180;
+        obstacleWidth = 100;
+        obstacleHeight = 180;
     }
 
     @Override
@@ -87,9 +87,12 @@ public class GameView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         screenWidth = w;
         screenHeight = h;
-        roadWidth = (int) (screenWidth * 0.8);
+        roadWidth = (int) (screenWidth * 0.9);
         roadLeft = (screenWidth - roadWidth) / 2;
-        laneWidth = roadWidth / 3;
+
+        numLanes = roadWidth / (obstacleWidth + 20);
+        if (numLanes < 3) numLanes = 3;
+        laneWidth = roadWidth / numLanes;
 
         playerX = screenWidth / 2 - playerWidth / 2;
         playerY = screenHeight - playerHeight - 200;
@@ -173,29 +176,21 @@ public class GameView extends View {
         // Ensure some vertical gap for playability
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            // Dynamic gap based on level but with a safe minimum
             int minGap = 350 - (level * 10);
             if (last.top < minGap) return;
         }
 
-        // Randomly pick which lanes to block (at least one lane MUST be safe)
-        int safeLane = random.nextInt(3);
+        // Randomly pick which lane to leave open (the safe lane)
+        int safeLane = random.nextInt(numLanes);
 
-        // Sometimes only spawn one car instead of two for more variety
-        boolean spawnTwo = random.nextInt(10) < 7; // 70% chance of 2 cars, 30% of 1 car
-
-        if (spawnTwo) {
-            for (int lane = 0; lane < 3; lane++) {
-                if (lane != safeLane) {
+        for (int lane = 0; lane < numLanes; lane++) {
+            if (lane != safeLane) {
+                // Randomly decide to block this lane in this row, but high probability
+                if (random.nextFloat() < 0.7f) {
                     int x = roadLeft + lane * laneWidth + (laneWidth - obstacleWidth) / 2;
                     obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
                 }
             }
-        } else {
-            // Pick one lane to block that isn't the safe lane
-            int blockLane = (safeLane + 1 + random.nextInt(2)) % 3;
-            int x = roadLeft + blockLane * laneWidth + (laneWidth - obstacleWidth) / 2;
-            obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
         }
     }
 
