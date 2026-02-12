@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.hardware.Camera;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -51,6 +52,7 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
     private SurfaceHolder surfaceHolder;
     private Camera camera;
     private Vibrator vibrator;
+    private MediaPlayer mediaPlayer;
     private Handler handler = new Handler();
     private int progressStatus = 0;
     private boolean shouldShowCamera = false;
@@ -81,6 +83,19 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
 
         requestPermissions();
         hideSystemUI();
+        startBackgroundMusic();
+    }
+
+    private void startBackgroundMusic() {
+        try {
+            mediaPlayer = MediaPlayer.create(this, R.raw.bg_music);
+            if (mediaPlayer != null) {
+                mediaPlayer.setLooping(true);
+                mediaPlayer.start();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void hideSystemUI() {
@@ -357,6 +372,16 @@ public class MainActivity extends AppCompatActivity implements GameView.OnGameEv
             camera.stopPreview();
             camera.release();
             camera = null;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (mediaPlayer != null) {
+            mediaPlayer.stop();
+            mediaPlayer.release();
+            mediaPlayer = null;
         }
     }
 }

@@ -183,12 +183,15 @@ public class GameView extends View {
         // Randomly pick which lane to leave open (the safe lane)
         int safeLane = random.nextInt(numLanes);
 
+        int lastBlockedLane = -2; // Keep track of last blocked lane in this row
         for (int lane = 0; lane < numLanes; lane++) {
-            if (lane != safeLane) {
-                // Randomly decide to block this lane in this row, but high probability
+            // Logic: Don't block if it's the safe lane OR if the previous lane was just blocked (prevent side-by-side)
+            if (lane != safeLane && lane != lastBlockedLane + 1) {
+                // Randomly decide to block this lane in this row
                 if (random.nextFloat() < 0.7f) {
                     int x = roadLeft + lane * laneWidth + (laneWidth - obstacleWidth) / 2;
                     obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
+                    lastBlockedLane = lane;
                 }
             }
         }
