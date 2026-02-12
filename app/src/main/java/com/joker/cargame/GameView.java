@@ -90,8 +90,8 @@ public class GameView extends View {
         roadWidth = (int) (screenWidth * 0.9);
         roadLeft = (screenWidth - roadWidth) / 2;
 
-        numLanes = roadWidth / (obstacleWidth + 20);
-        if (numLanes < 3) numLanes = 3;
+        numLanes = roadWidth / (obstacleWidth + 10);
+        if (numLanes < 4) numLanes = 4; // Ensure at least 4 lanes for 3-car spawning
         laneWidth = roadWidth / numLanes;
 
         playerX = screenWidth / 2 - playerWidth / 2;
@@ -173,27 +173,27 @@ public class GameView extends View {
     }
 
     private void spawnObstacle() {
-        // Ensure some vertical gap for playability
+        // Ensure some vertical gap for playability - increased gap as requested
         if (!obstacles.isEmpty()) {
             Rect last = obstacles.get(obstacles.size() - 1);
-            int minGap = 350 - (level * 10);
+            int minGap = 450 - (level * 10);
             if (last.top < minGap) return;
         }
 
-        // Randomly pick which lane to leave open (the safe lane)
-        int safeLane = random.nextInt(numLanes);
+        // Randomly pick exactly 3 unique lanes to spawn cars
+        List<Integer> availableLanes = new ArrayList<>();
+        for (int i = 0; i < numLanes; i++) {
+            availableLanes.add(i);
+        }
 
-        int lastBlockedLane = -2; // Keep track of last blocked lane in this row
-        for (int lane = 0; lane < numLanes; lane++) {
-            // Logic: Don't block if it's the safe lane OR if the previous lane was just blocked (prevent side-by-side)
-            if (lane != safeLane && lane != lastBlockedLane + 1) {
-                // Randomly decide to block this lane in this row
-                if (random.nextFloat() < 0.7f) {
-                    int x = roadLeft + lane * laneWidth + (laneWidth - obstacleWidth) / 2;
-                    obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
-                    lastBlockedLane = lane;
-                }
-            }
+        int spawnCount = Math.min(3, numLanes - 1); // Always leave at least one lane open
+        for (int i = 0; i < spawnCount; i++) {
+            if (availableLanes.isEmpty()) break;
+            int randomIndex = random.nextInt(availableLanes.size());
+            int lane = availableLanes.remove(randomIndex);
+
+            int x = roadLeft + lane * laneWidth + (laneWidth - obstacleWidth) / 2;
+            obstacles.add(new Rect(x, -obstacleHeight - 50, x + obstacleWidth, -50));
         }
     }
 
