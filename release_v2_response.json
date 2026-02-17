@@ -1,9 +1,9 @@
 {
-  "url": "https://api.github.com/repos/lezgindurmaz/NewProject/releases/287000313",
-  "assets_url": "https://api.github.com/repos/lezgindurmaz/NewProject/releases/287000313/assets",
-  "upload_url": "https://uploads.github.com/repos/lezgindurmaz/NewProject/releases/287000313/assets{?name,label}",
-  "html_url": "https://github.com/lezgindurmaz/NewProject/releases/tag/Mobil-v1.0",
-  "id": 287000313,
+  "url": "https://api.github.com/repos/lezgindurmaz/NewProject/releases/287360797",
+  "assets_url": "https://api.github.com/repos/lezgindurmaz/NewProject/releases/287360797/assets",
+  "upload_url": "https://uploads.github.com/repos/lezgindurmaz/NewProject/releases/287360797/assets{?name,label}",
+  "html_url": "https://github.com/lezgindurmaz/NewProject/releases/tag/Mobil-v2.0",
+  "id": 287360797,
   "author": {
     "login": "lezgindurmaz",
     "id": 226860461,
@@ -25,20 +25,20 @@
     "user_view_type": "public",
     "site_admin": false
   },
-  "node_id": "RE_kwDOQt6Rv84RG0b5",
-  "tag_name": "Mobil-v1.0",
+  "node_id": "RE_kwDOQt6Rv84RIMcd",
+  "tag_name": "Mobil-v2.0",
   "target_commitish": "main",
-  "name": "Mobil v1.0",
+  "name": "Mobil v2.0",
   "draft": false,
   "immutable": false,
   "prerelease": false,
   "created_at": "2025-12-31T08:40:01Z",
-  "updated_at": "2026-02-16T21:24:45Z",
-  "published_at": "2026-02-16T21:24:45Z",
+  "updated_at": "2026-02-17T17:57:11Z",
+  "published_at": "2026-02-17T17:57:11Z",
   "assets": [
 
   ],
-  "tarball_url": "https://api.github.com/repos/lezgindurmaz/NewProject/tarball/Mobil-v1.0",
-  "zipball_url": "https://api.github.com/repos/lezgindurmaz/NewProject/zipball/Mobil-v1.0",
-  "body": "Yeni Mobil uygulamasının ilk sürümü."
+  "tarball_url": "https://api.github.com/repos/lezgindurmaz/NewProject/tarball/Mobil-v2.0",
+  "zipball_url": "https://api.github.com/repos/lezgindurmaz/NewProject/zipball/Mobil-v2.0",
+  "body": "System Destroyer RPG oyunu eklendi. C tabanlı native motor kullanıldı."
 }
