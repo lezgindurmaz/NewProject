@@ -117,6 +117,18 @@ void ata_write_sector(uint32_t lba, uint16_t* buffer) {
     while (inb(0x1F7) & 0x80);
 }
 
+void ata_read_sector(uint32_t lba, uint16_t* buffer) {
+    outb(0x1F6, 0xE0 | ((lba >> 24) & 0x0F));
+    outb(0x1F2, 1);
+    outb(0x1F3, (uint8_t)lba);
+    outb(0x1F4, (uint8_t)(lba >> 8));
+    outb(0x1F5, (uint8_t)(lba >> 16));
+    outb(0x1F7, 0x20);
+    while (inb(0x1F7) & 0x80);
+    while (!(inb(0x1F7) & 0x08));
+    for (int i = 0; i < 256; i++) buffer[i] = inw(0x1F0);
+}
+
 char get_key() {
     if (inb(0x64) & 1) {
         uint8_t sc = inb(0x60);
@@ -158,25 +170,34 @@ extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
 
 void install_to_hdd() {
-    terminal_writestring("\nHDD'ye FAT32 Kurulumu yapiliyor...\n");
-    uint8_t sector0[512];
-    for(int i=0; i<512; i++) sector0[i] = mbr_bin[i];
-    *((uint32_t*)(sector0 + 32)) = (uint32_t)total_hdd_sectors;
-    *((uint32_t*)(sector0 + 36)) = (uint32_t)(total_hdd_sectors / 1024);
-    ata_write_sector(0, (uint16_t*)sector0);
-    uint8_t* k_start = _kernel_start;
-    uint8_t* k_end = _kernel_end;
-    uint32_t k_size = (uint32_t)(k_end - k_start);
-    uint32_t num_sectors = (k_size + 511) / 512;
+    terminal_writestring("\nHDD'ye Güvenli Kurulum yapiliyor...\n");
+    uint16_t v_buf[256];
+    uint8_t s0[512];
+    for(int i=0; i<512; i++) s0[i] = mbr_bin[i];
+    *((uint32_t*)(s0 + 32)) = (uint32_t)total_hdd_sectors;
+
+    terminal_writestring("MBR yaziliyor... ");
+    ata_write_sector(0, (uint16_t*)s0);
+    ata_read_sector(0, v_buf);
+    for(int i=0; i<256; i++) if(v_buf[i] != ((uint16_t*)s0)[i]) { terminal_writestring("Hata!"); return; }
+    terminal_writestring("OK.\n");
+
+    uint8_t* k_start = (uint8_t*)0x100000; // Copy from RAM (Load address)
+    uint32_t k_size = (uint32_t)((uintptr_t)_kernel_end - (uintptr_t)_kernel_start);
+    uint32_t n_sectors = (k_size + 511) / 512;
+
     terminal_writestring("Kernel yaziliyor (");
-    terminal_writeuint(num_sectors);
+    terminal_writeuint(n_sectors);
     terminal_writestring(" sektor)...\n");
-    for (uint32_t i = 0; i < num_sectors; i++) {
-        ata_write_sector(i + 1, (uint16_t*)(k_start + i * 512));
-        if (i % 20 == 0) terminal_putchar('.');
+
+    for (uint32_t i = 0; i < n_sectors; i++) {
+        uint16_t* src = (uint16_t*)(k_start + i * 512);
+        ata_write_sector(i + 1, src);
+        ata_read_sector(i + 1, v_buf);
+        for(int j=0; j<256; j++) if(v_buf[j] != src[j]) { terminal_writestring("\nDogrulama hatasi!"); return; }
+        if (i % 10 == 0) terminal_putchar('.');
     }
-    terminal_writestring("\nKurulum tamamlandi! FAT32 yapisi olusturuldu.\n");
-    terminal_writestring("Lutfen ISO'yu cikarin ve yeniden baslatin.\n");
+    terminal_writestring("\nTamamlandi! Lutfen ISO'yu cikarin ve yeniden baslatin.\n");
     wait_any_key();
 }
 
