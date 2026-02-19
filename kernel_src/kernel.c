@@ -13,13 +13,8 @@ enum vga_color {
     VGA_COLOR_BLUE = 1,
 };
 
-static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
-    return fg | bg << 4;
-}
-
-static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
-    return (uint16_t) uc | (uint16_t) color << 8;
-}
+static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) { return fg | bg << 4; }
+static inline uint16_t vga_entry(unsigned char uc, uint8_t color) { return (uint16_t) uc | (uint16_t) color << 8; }
 
 static const size_t VGA_WIDTH = 80;
 static const size_t VGA_HEIGHT = 25;
@@ -76,7 +71,7 @@ static inline uint8_t inb(uint16_t port) { uint8_t ret; asm volatile ( "inb %1, 
 static inline uint16_t inw(uint16_t port) { uint16_t ret; asm volatile ( "inw %1, %0" : "=a"(ret) : "Nd"(port) ); return ret; }
 static inline void outw(uint16_t port, uint16_t val) { asm volatile ( "outw %0, %1" : : "a"(val), "Nd"(port) ); }
 
-uint32_t hdd_sectors = 0;
+uint64_t total_hdd_sectors = 0;
 
 void ata_identify() {
     outb(0x1F6, 0xA0);
@@ -92,10 +87,20 @@ void ata_identify() {
     while (!(inb(0x1F7) & 0x08));
     uint16_t data[256] = {0};
     for (int i = 0; i < 256; i++) data[i] = inw(0x1F0);
-    hdd_sectors = *((uint32_t*)(data + 60));
-    terminal_writestring("Primary Master HDD: ");
-    terminal_writeuint(hdd_sectors / 2 / 1024 / 1024);
-    terminal_writestring(" GB");
+    bool lba48 = data[83] & (1 << 10);
+    if (lba48) total_hdd_sectors = *((uint64_t*)(data + 100));
+    else total_hdd_sectors = *((uint32_t*)(data + 60));
+    terminal_writestring("ATA HDD: ");
+    uint64_t size_mb = (total_hdd_sectors * 512) / (1024 * 1024);
+    if (size_mb >= 1024) {
+        terminal_writeuint((uint32_t)(size_mb / 1024));
+        terminal_writestring(".");
+        terminal_writeuint((uint32_t)((size_mb % 1024) * 10 / 1024));
+        terminal_writestring(" GB");
+    } else {
+        terminal_writeuint((uint32_t)size_mb);
+        terminal_writestring(" MB");
+    }
 }
 
 void ata_write_sector(uint32_t lba, uint16_t* buffer) {
@@ -122,47 +127,11 @@ char get_key() {
     return 0;
 }
 
-void wait_key() {
-    char c;
-    while (!(c = get_key()));
-}
-
-void shutdown() {
-    terminal_writestring("\nSistem kapatiliyor...\n");
-    outw(0x604, 0x2000); // QEMU
-    outw(0x4004, 0x3400); // VBox
-    outw(0xB004, 0x2000); // Bochs
-    while(1) asm("hlt");
-}
-
-extern uint8_t mbr_bin[];
-extern uint32_t mbr_bin_size;
-extern uint8_t _kernel_start[];
-extern uint8_t _kernel_end[];
-
-void install_to_hdd() {
-    terminal_writestring("\nHDD'ye kopyalaniyor...\n");
-    ata_write_sector(0, (uint16_t*)mbr_bin);
-    uint8_t* k_start = _kernel_start;
-    uint8_t* k_end = _kernel_end;
-    uint32_t k_size = (uint32_t)(k_end - k_start);
-    uint32_t num_sectors = (k_size + 511) / 512;
-    terminal_writestring("Kernel boyutu: ");
-    terminal_writeuint(k_size);
-    terminal_writestring(" byte (");
-    terminal_writeuint(num_sectors);
-    terminal_writestring(" sektor)\n");
-    for (uint32_t i = 0; i < num_sectors; i++) {
-        ata_write_sector(i + 1, (uint16_t*)(k_start + i * 512));
-        if (i % 10 == 0) terminal_putchar('.');
-    }
-    terminal_writestring("\nTamamlandi! ISO'yu cikarin ve yeniden baslatin.\n");
-    wait_key();
-}
+void wait_any_key() { while (!get_key()); }
 
 void ram_keyboard_test() {
     terminal_writestring("\n--- Klavye & RAM Testi ---\n");
-    terminal_writestring("Yazdiginiz her karakter RAM'e (0x1100000) yazilir ve dogrulanir.\n");
+    terminal_writestring("Yazdiginiz veriler RAM'e (0x1100000) yazilir ve dogrulanir.\n");
     terminal_writestring("Cikmak icin ENTER'a basin.\n");
     volatile char* ram_ptr = (volatile char*)0x1100000;
     while (true) {
@@ -175,6 +144,40 @@ void ram_keyboard_test() {
         }
     }
     terminal_writestring("\nTest bitti.\n");
+}
+
+void shutdown() {
+    terminal_writestring("\nSistem kapatiliyor...\n");
+    outw(0x604, 0x2000);
+    outw(0x4004, 0x3400);
+    while(1) asm("hlt");
+}
+
+extern uint8_t mbr_bin[];
+extern uint8_t _kernel_start[];
+extern uint8_t _kernel_end[];
+
+void install_to_hdd() {
+    terminal_writestring("\nHDD'ye FAT32 Kurulumu yapiliyor...\n");
+    uint8_t sector0[512];
+    for(int i=0; i<512; i++) sector0[i] = mbr_bin[i];
+    *((uint32_t*)(sector0 + 32)) = (uint32_t)total_hdd_sectors;
+    *((uint32_t*)(sector0 + 36)) = (uint32_t)(total_hdd_sectors / 1024);
+    ata_write_sector(0, (uint16_t*)sector0);
+    uint8_t* k_start = _kernel_start;
+    uint8_t* k_end = _kernel_end;
+    uint32_t k_size = (uint32_t)(k_end - k_start);
+    uint32_t num_sectors = (k_size + 511) / 512;
+    terminal_writestring("Kernel yaziliyor (");
+    terminal_writeuint(num_sectors);
+    terminal_writestring(" sektor)...\n");
+    for (uint32_t i = 0; i < num_sectors; i++) {
+        ata_write_sector(i + 1, (uint16_t*)(k_start + i * 512));
+        if (i % 20 == 0) terminal_putchar('.');
+    }
+    terminal_writestring("\nKurulum tamamlandi! FAT32 yapisi olusturuldu.\n");
+    terminal_writestring("Lutfen ISO'yu cikarin ve yeniden baslatin.\n");
+    wait_any_key();
 }
 
 void kmain(struct multiboot_info* mb_info, uint32_t magic) {
@@ -196,11 +199,11 @@ void kmain(struct multiboot_info* mb_info, uint32_t magic) {
 
     if (!from_hdd) {
         terminal_writestring("\nKerneli depolama alanina aktarmak icin herhangi bir tusa basin.\n");
-        wait_key();
+        wait_any_key();
         install_to_hdd();
     } else {
         terminal_writestring("\nBilgisayari kapatmak icin herhangi bir tusa basin.\n");
-        wait_key();
+        wait_any_key();
         shutdown();
     }
 }
