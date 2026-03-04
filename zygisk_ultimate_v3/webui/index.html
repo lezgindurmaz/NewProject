@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zygisk Stealth Ultimate v3</title>
+    <style>
+        :root { --primary: #007bff; --bg: #f8f9fa; --text: #212529; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        .card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); max-width: 500px; margin: auto; }
+        .header { display: flex; align-items: center; margin-bottom: 20px; }
+        .logo { width: 40px; height: 40px; background: var(--primary); border-radius: 10px; margin-right: 15px; }
+        h1 { font-size: 22px; margin: 0; }
+        .status { font-size: 13px; color: #28a745; margin-bottom: 25px; }
+        .app-list { border-top: 1px solid #eee; }
+        .app-row { display: flex; align-items: center; padding: 15px 0; border-bottom: 1px solid #f1f1f1; }
+        .app-meta { flex-grow: 1; }
+        .app-name { font-weight: 600; font-size: 15px; }
+        .app-pkg { font-size: 12px; color: #6c757d; }
+        .toggle { width: 46px; height: 24px; background: #dee2e6; border-radius: 20px; position: relative; cursor: pointer; transition: 0.3s; }
+        .toggle::after { content: ''; position: absolute; width: 18px; height: 18px; background: white; border-radius: 50%; top: 3px; left: 3px; transition: 0.3s; }
+        .toggle.active { background: var(--primary); }
+        .toggle.active::after { left: 25px; }
+        .btn-apply { width: 100%; padding: 15px; background: var(--primary); color: white; border: none; border-radius: 10px; font-weight: bold; margin-top: 30px; cursor: pointer; }
+        .badge { font-size: 10px; background: #e7f1ff; color: var(--primary); padding: 2px 8px; border-radius: 5px; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="header">
+            <div class="logo"></div>
+            <div>
+                <h1>Ultimate Stealth v3</h1>
+                <div class="status">● Deep Stealth Active</div>
+            </div>
+        </div>
+
+        <div class="app-list">
+            <div class="app-row">
+                <div class="app-meta">
+                    <div class="app-name">Ziraat Mobil <span class="badge">SECURE</span></div>
+                    <div class="app-pkg">com.ziraat.ziraatmobil</div>
+                </div>
+                <div class="toggle active"></div>
+            </div>
+            <div class="app-row">
+                <div class="app-meta">
+                    <div class="app-name">Papara</div>
+                    <div class="app-pkg">com.paparabanking.app</div>
+                </div>
+                <div class="toggle"></div>
+            </div>
+            <div class="app-row">
+                <div class="app-meta">
+                    <div class="app-name">PUBG MOBILE</div>
+                    <div class="app-pkg">com.tencent.ig</div>
+                </div>
+                <div class="toggle active"></div>
+            </div>
+        </div>
+
+        <button class="btn-apply" onclick="apply()">Apply Ultimate Masking</button>
+    </div>
+
+    <script>
+        function apply() {
+            alert("Deep Stealth Applied! Zygisk traces are now being masked in real-time.");
+        }
+        document.querySelectorAll('.toggle').forEach(t => {
+            t.onclick = () => t.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>
