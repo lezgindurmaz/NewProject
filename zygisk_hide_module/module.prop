@@ -1,0 +1,6 @@
+id=zygisk_stealth_hide
+name=Zygisk Stealth Hide (KPM)
+version=v1.0
+versionCode=1
+author=Jules
+description=Kernel-level Zygisk and LSPosed hider for APatch/Folkpatch. Filters proc/maps and hides data/adb/zygisk paths perfectly.
