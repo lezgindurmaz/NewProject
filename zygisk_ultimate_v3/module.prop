@@ -1,6 +1,0 @@
-id=zygisk_stealth_ultimate
-name=Zygisk Stealth Ultimate (APatch)
-version=v3.0
-versionCode=3
-author=Jules
-description=The most comprehensive Zygisk and LSPosed hider for APatch. "Deep Stealth" technology combines kernel-assisted masking, namespace isolation, and zero-trace unmounting for perfect concealment.
