@@ -2,126 +2,186 @@
 #include <windows.h>
 #include <exdisp.h>
 #include <mshtml.h>
-#include <shlwapi.h>
+#include <oleidl.h>
+#include <stddef.h>
 #include "index_html.h"
 
-// Define missing GUIDs for MinGW
-const GUID IID_IWebBrowser2_local = { 0xD30C1661, 0xCDAF, 0x11d0, { 0x8A, 0x3E, 0x00, 0xC0, 0x4F, 0xC9, 0xE2, 0x6E } };
-const GUID IID_IOleObject_local = { 0x00000112, 0x0000, 0x0000, { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 } };
-const GUID CLSID_WebBrowser_local = { 0x8856F961, 0x340A, 0x11D0, { 0xA9, 0x6B, 0x00, 0xC0, 0x4F, 0xD7, 0x05, 0xA2 } };
-const GUID IID_IHTMLDocument2_local = { 0x332c4425, 0x26cb, 0x11d0, { 0xb4, 0x83, 0x00, 0xc0, 0x4f, 0xa3, 0x00, 0xbb } };
+// Minimal OLE Container Implementation
+typedef struct {
+    IOleClientSite IOleClientSite_iface;
+    IOleInPlaceSite IOleInPlaceSite_iface;
+    IOleInPlaceFrame IOleInPlaceFrame_iface;
+    LONG refCount;
+    HWND hwnd;
+} WebHost;
 
-// Simple XOR obfuscation
-void deobfuscate(char* str, char key) {
-    while (*str) {
-        *str ^= key;
-        str++;
+// IUnknown for IOleClientSite
+HRESULT STDMETHODCALLTYPE Host_QueryInterface(IOleClientSite* This, REFIID riid, void** ppvObject) {
+    WebHost* host = (WebHost*)This;
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IOleClientSite)) {
+        *ppvObject = &host->IOleClientSite_iface;
+    } else if (IsEqualIID(riid, &IID_IOleInPlaceSite)) {
+        *ppvObject = &host->IOleInPlaceSite_iface;
+    } else {
+        *ppvObject = NULL;
+        return E_NOINTERFACE;
     }
+    ((IUnknown*)*ppvObject)->lpVtbl->AddRef((IUnknown*)*ppvObject);
+    return S_OK;
 }
+ULONG STDMETHODCALLTYPE Host_AddRef(IOleClientSite* This) { return InterlockedIncrement(&((WebHost*)This)->refCount); }
+ULONG STDMETHODCALLTYPE Host_Release(IOleClientSite* This) { return InterlockedDecrement(&((WebHost*)This)->refCount); }
+HRESULT STDMETHODCALLTYPE Host_SaveObject(IOleClientSite* This) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Host_GetMoniker(IOleClientSite* This, DWORD dwAssign, DWORD dwWhichMoniker, IMoniker** ppmk) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Host_GetContainer(IOleClientSite* This, IOleContainer** ppContainer) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Host_ShowObject(IOleClientSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Host_OnShowWindow(IOleClientSite* This, BOOL fShow) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Host_RequestNewObjectLayout(IOleClientSite* This) { return E_NOTIMPL; }
+
+static IOleClientSiteVtbl ClientSiteVtbl = { Host_QueryInterface, Host_AddRef, Host_Release, Host_SaveObject, Host_GetMoniker, Host_GetContainer, Host_ShowObject, Host_OnShowWindow, Host_RequestNewObjectLayout };
+
+// IOleInPlaceSite implementation
+HRESULT STDMETHODCALLTYPE InPlace_QueryInterface(IOleInPlaceSite* This, REFIID riid, void** ppvObject) {
+    return Host_QueryInterface((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceSite_iface)), riid, ppvObject);
+}
+ULONG STDMETHODCALLTYPE InPlace_AddRef(IOleInPlaceSite* This) { return Host_AddRef((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceSite_iface))); }
+ULONG STDMETHODCALLTYPE InPlace_Release(IOleInPlaceSite* This) { return Host_Release((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceSite_iface))); }
+HRESULT STDMETHODCALLTYPE InPlace_GetWindow(IOleInPlaceSite* This, HWND* phwnd) { *phwnd = ((WebHost*)((char*)This - offsetof(WebHost, IOleInPlaceSite_iface)))->hwnd; return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_ContextSensitiveHelp(IOleInPlaceSite* This, BOOL fEnterMode) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_CanInPlaceActivate(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_OnInPlaceActivate(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_OnUIActivate(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_GetWindowContext(IOleInPlaceSite* This, IOleInPlaceFrame** ppFrame, IOleInPlaceUIWindow** ppDoc, LPRECT lprcPosRect, LPRECT lprcClipRect, LPOLEINPLACEFRAMEINFO lpFrameInfo) {
+    WebHost* host = (WebHost*)((char*)This - offsetof(WebHost, IOleInPlaceSite_iface));
+    *ppFrame = &host->IOleInPlaceFrame_iface;
+    *ppDoc = NULL;
+    GetClientRect(host->hwnd, lprcPosRect);
+    GetClientRect(host->hwnd, lprcClipRect);
+    lpFrameInfo->cb = sizeof(OLEINPLACEFRAMEINFO);
+    lpFrameInfo->fMDIApp = FALSE;
+    lpFrameInfo->hwndFrame = host->hwnd;
+    lpFrameInfo->haccel = NULL;
+    lpFrameInfo->cAccelEntries = 0;
+    return S_OK;
+}
+HRESULT STDMETHODCALLTYPE InPlace_Scroll(IOleInPlaceSite* This, SIZE scrollExtant) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE InPlace_OnUIDeactivate(IOleInPlaceSite* This, BOOL fUndoable) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_OnInPlaceDeactivate(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_DiscardUndoState(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_DeactivateAndUndo(IOleInPlaceSite* This) { return S_OK; }
+HRESULT STDMETHODCALLTYPE InPlace_OnPosRectChange(IOleInPlaceSite* This, LPCRECT lprcPosRect) { return S_OK; }
+
+static IOleInPlaceSiteVtbl InPlaceSiteVtbl = { (void*)InPlace_QueryInterface, (void*)InPlace_AddRef, (void*)InPlace_Release, InPlace_GetWindow, InPlace_ContextSensitiveHelp, InPlace_CanInPlaceActivate, InPlace_OnInPlaceActivate, InPlace_OnUIActivate, InPlace_GetWindowContext, InPlace_Scroll, InPlace_OnUIDeactivate, InPlace_OnInPlaceDeactivate, InPlace_DiscardUndoState, InPlace_DeactivateAndUndo, InPlace_OnPosRectChange };
+
+// IOleInPlaceFrame implementation
+HRESULT STDMETHODCALLTYPE Frame_QueryInterface(IOleInPlaceFrame* This, REFIID riid, void** ppvObject) {
+    return Host_QueryInterface((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceFrame_iface)), riid, ppvObject);
+}
+ULONG STDMETHODCALLTYPE Frame_AddRef(IOleInPlaceFrame* This) { return Host_AddRef((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceFrame_iface))); }
+ULONG STDMETHODCALLTYPE Frame_Release(IOleInPlaceFrame* This) { return Host_Release((IOleClientSite*)((char*)This - offsetof(WebHost, IOleInPlaceFrame_iface))); }
+HRESULT STDMETHODCALLTYPE Frame_GetWindow(IOleInPlaceFrame* This, HWND* phwnd) { *phwnd = ((WebHost*)((char*)This - offsetof(WebHost, IOleInPlaceFrame_iface)))->hwnd; return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_ContextSensitiveHelp(IOleInPlaceFrame* This, BOOL fEnterMode) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_GetBorder(IOleInPlaceFrame* This, LPRECT lprectBorder) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Frame_RequestBorderSpace(IOleInPlaceFrame* This, LPCBORDERWIDTHS pborderwidths) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Frame_SetBorderSpace(IOleInPlaceFrame* This, LPCBORDERWIDTHS pborderwidths) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Frame_SetActiveObject(IOleInPlaceFrame* This, IOleInPlaceActiveObject* pActiveObject, LPCOLESTR pszObjName) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_InsertMenus(IOleInPlaceFrame* This, HMENU hmenuShared, LPOLEMENUGROUPWIDTHS lpMenuWidths) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Frame_SetMenu(IOleInPlaceFrame* This, HMENU hmenuShared, HOLEMENU holemenu, HWND hwndActiveObject) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_RemoveMenus(IOleInPlaceFrame* This, HMENU hmenuShared) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE Frame_SetStatusText(IOleInPlaceFrame* This, LPCOLESTR pszStatusText) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_EnableModeless(IOleInPlaceFrame* This, BOOL fEnable) { return S_OK; }
+HRESULT STDMETHODCALLTYPE Frame_TranslateAccelerator(IOleInPlaceFrame* This, LPMSG lpmsg, WORD wID) { return E_NOTIMPL; }
+
+static IOleInPlaceFrameVtbl InPlaceFrameVtbl = { (void*)Frame_QueryInterface, (void*)Frame_AddRef, (void*)Frame_Release, Frame_GetWindow, Frame_ContextSensitiveHelp, Frame_GetBorder, Frame_RequestBorderSpace, Frame_SetBorderSpace, Frame_SetActiveObject, Frame_InsertMenus, Frame_SetMenu, Frame_RemoveMenus, Frame_SetStatusText, Frame_EnableModeless, Frame_TranslateAccelerator };
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-        case WM_KEYDOWN:
-            if (wParam == VK_ESCAPE) {
-                DestroyWindow(hwnd);
-            }
-            return 0;
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_KEYDOWN: if (wParam == VK_ESCAPE) DestroyWindow(hwnd); return 0;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    CoInitialize(NULL);
-
-    char className[] = { 'X', 'k', 'i', 'j', 'B', 'a', 'n', 'k', 'W', 'e', 'b', 'V', 'i', 'e', 'w', 0 }; // Obfuscated
-    // Actually let's just use it plainly for now or do real obfuscation
+    OleInitialize(NULL);
 
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = "YokiBankWebView";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-
     RegisterClass(&wc);
 
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
 
-    HWND hwnd = CreateWindowEx(
-        WS_EX_TOPMOST,
-        "YokiBankWebView",
-        "YokiBank-Safe Banking",
-        WS_POPUP | WS_VISIBLE,
-        0, 0, screenWidth, screenHeight,
-        NULL, NULL, hInstance, NULL
-    );
-
+    HWND hwnd = CreateWindowEx(WS_EX_TOPMOST, "YokiBankWebView", "YokiBank-Safe Banking", WS_POPUP | WS_VISIBLE, 0, 0, sw, sh, NULL, NULL, hInstance, NULL);
     if (!hwnd) return 0;
 
-    IWebBrowser2* pWebBrowser = NULL;
-    IOleObject* pOleObject = NULL;
-    RECT rc;
-    GetClientRect(hwnd, &rc);
+    WebHost host;
+    host.IOleClientSite_iface.lpVtbl = &ClientSiteVtbl;
+    host.IOleInPlaceSite_iface.lpVtbl = &InPlaceSiteVtbl;
+    host.IOleInPlaceFrame_iface.lpVtbl = &InPlaceFrameVtbl;
+    host.refCount = 1;
+    host.hwnd = hwnd;
 
-    HRESULT hr = CoCreateInstance(&CLSID_WebBrowser_local, NULL, CLSCTX_INPROC_SERVER, &IID_IOleObject_local, (void**)&pOleObject);
-    if (SUCCEEDED(hr)) {
-        pOleObject->lpVtbl->DoVerb(pOleObject, OLEIVERB_INPLACEACTIVATE, NULL, NULL, 0, hwnd, &rc);
-        pOleObject->lpVtbl->QueryInterface(pOleObject, &IID_IWebBrowser2_local, (void**)&pWebBrowser);
+    IOleObject* pOleObject = NULL;
+    IWebBrowser2* pWebBrowser = NULL;
+
+    if (SUCCEEDED(CoCreateInstance(&CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, &IID_IOleObject, (void**)&pOleObject))) {
+        pOleObject->lpVtbl->SetClientSite(pOleObject, &host.IOleClientSite_iface);
+        RECT rc; GetClientRect(hwnd, &rc);
+        pOleObject->lpVtbl->DoVerb(pOleObject, OLEIVERB_INPLACEACTIVATE, NULL, &host.IOleClientSite_iface, 0, hwnd, &rc);
+        pOleObject->lpVtbl->QueryInterface(pOleObject, &IID_IWebBrowser2, (void**)&pWebBrowser);
     }
 
     if (pWebBrowser) {
-        // Convert UTF-8 to BSTR
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, (char*)index_html, index_html_len, NULL, 0);
-        BSTR bstrHTML = SysAllocStringLen(NULL, wlen);
-        MultiByteToWideChar(CP_UTF8, 0, (char*)index_html, index_html_len, bstrHTML, wlen);
-
-        SAFEARRAY* sa = SafeArrayCreateVector(VT_VARIANT, 0, 1);
-        VARIANT* pVar;
-        SafeArrayAccessData(sa, (void**)&pVar);
-        VariantInit(pVar);
-        V_VT(pVar) = VT_BSTR;
-        V_BSTR(pVar) = bstrHTML;
-        SafeArrayUnaccessData(sa);
-
+        VARIANT vEmpty; VariantInit(&vEmpty);
         BSTR bstrURL = SysAllocString(L"about:blank");
-        VARIANT varEmpty;
-        VariantInit(&varEmpty);
-        pWebBrowser->lpVtbl->Navigate(pWebBrowser, bstrURL, &varEmpty, &varEmpty, &varEmpty, &varEmpty);
+        pWebBrowser->lpVtbl->Navigate(pWebBrowser, bstrURL, &vEmpty, &vEmpty, &vEmpty, &vEmpty);
         SysFreeString(bstrURL);
 
-        IDispatch* pDisp = NULL;
-        while (FAILED(pWebBrowser->lpVtbl->get_Document(pWebBrowser, &pDisp)) || pDisp == NULL) {
+        READYSTATE rs;
+        do {
             MSG msg;
-            if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-            Sleep(10);
-        }
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+            pWebBrowser->lpVtbl->get_ReadyState(pWebBrowser, &rs);
+            Sleep(1);
+        } while (rs != READYSTATE_COMPLETE);
 
-        IHTMLDocument2* pDoc = NULL;
-        pDisp->lpVtbl->QueryInterface(pDisp, &IID_IHTMLDocument2_local, (void**)&pDoc);
-        if (pDoc) {
-            pDoc->lpVtbl->write(pDoc, sa);
-            pDoc->lpVtbl->close(pDoc);
-            pDoc->lpVtbl->Release(pDoc);
+        IDispatch* pDisp = NULL;
+        if (SUCCEEDED(pWebBrowser->lpVtbl->get_Document(pWebBrowser, &pDisp)) && pDisp) {
+            IHTMLDocument2* pDoc = NULL;
+            if (SUCCEEDED(pDisp->lpVtbl->QueryInterface(pDisp, &IID_IHTMLDocument2, (void**)&pDoc)) && pDoc) {
+                int wlen = MultiByteToWideChar(CP_UTF8, 0, (char*)index_html, index_html_len, NULL, 0);
+                BSTR bstrHTML = SysAllocStringLen(NULL, wlen);
+                MultiByteToWideChar(CP_UTF8, 0, (char*)index_html, index_html_len, bstrHTML, wlen);
+
+                SAFEARRAY* sa = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+                VARIANT* pVar;
+                SafeArrayAccessData(sa, (void**)&pVar);
+                VariantInit(pVar);
+                V_VT(pVar) = VT_BSTR;
+                V_BSTR(pVar) = bstrHTML;
+                SafeArrayUnaccessData(sa);
+
+                pDoc->lpVtbl->write(pDoc, sa);
+                pDoc->lpVtbl->close(pDoc);
+                pDoc->lpVtbl->Release(pDoc);
+                SafeArrayDestroy(sa);
+            }
+            pDisp->lpVtbl->Release(pDisp);
         }
-        pDisp->lpVtbl->Release(pDisp);
-        SafeArrayDestroy(sa); // Also clears variants (SysFreeString bstrHTML)
     }
 
     MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
+    while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
 
     if (pWebBrowser) pWebBrowser->lpVtbl->Release(pWebBrowser);
-    if (pOleObject) pOleObject->lpVtbl->Release(pOleObject);
-
-    CoUninitialize();
+    if (pOleObject) {
+        pOleObject->lpVtbl->Close(pOleObject, OLECLOSE_NOSAVE);
+        pOleObject->lpVtbl->Release(pOleObject);
+    }
+    OleUninitialize();
     return 0;
 }
