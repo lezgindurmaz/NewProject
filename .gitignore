@@ -4,9 +4,11 @@
 /.idea/
 .DS_Store
 /build
+app/build/
 /captures
 .externalNativeBuild
 .cxx
 *.hprof
 *.keystore
 app/keystore.properties
+*.jks

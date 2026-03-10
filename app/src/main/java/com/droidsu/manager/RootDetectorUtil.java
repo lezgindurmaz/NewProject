@@ -1,4 +1,4 @@
-package com.example.rootdetector;
+package com.droidsu.manager;
 import android.content.Context;
 import android.os.Build;
 import com.google.android.play.core.integrity.IntegrityManager;
@@ -49,7 +49,7 @@ public class RootDetectorUtil {
     }
     private static String parseVerdictFromToken(String token) {
         try {
-            String[] parts = token.split("\.");
+            String[] parts = token.split("\\.");
             if (parts.length < 2) return "Invalid Token Structure";
             byte[] decodedBytes = Base64.getDecoder().decode(parts[1]);
             String payload = new String(decodedBytes, "UTF-8");
