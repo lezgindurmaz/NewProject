@@ -1,18 +1,21 @@
 package com.droidsu.manager;
 
-import android.util.Log;
-
 public class SuperCallUtils {
-    // This is a simplified representation of KernelPatch SuperCall
-    // In reality, this would involve JNI calls to trigger the custom syscall
-
-    public static boolean requestRoot(String superKey, String command) {
-        Log.d("DroidSU", "Requesting root with key: " + superKey + " for cmd: " + command);
-        // Simulation of syscall result
-        return true;
+    static {
+        System.loadLibrary("droidsu");
     }
 
-    public static void setWhitelist(String packageName, boolean allowed) {
-        // Logic to update /data/adb/droidsu/whitelist
+    public static native int nativeSuperCall(long key, int cmd, long arg1, long arg2);
+    public static native boolean isKernelPatched();
+
+    // KP Commands
+    public static final int KP_CMD_GET_VERSION = 0;
+    public static final int KP_CMD_GET_ROOT = 1;
+    public static final int KP_CMD_SET_KEY = 2;
+
+    public static boolean requestRoot(long superKey) {
+        if (!isKernelPatched()) return false;
+        int result = nativeSuperCall(superKey, KP_CMD_GET_ROOT, 0, 0);
+        return result == 0;
     }
 }

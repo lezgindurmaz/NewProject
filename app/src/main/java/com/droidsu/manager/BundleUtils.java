@@ -25,7 +25,8 @@ public class BundleUtils {
                 while ((read = is.read(buffer)) != -1) {
                     os.write(buffer, 0, read);
                 }
-                // Logic to trigger installation via DroidSU core would go here
+                // Real installation logic
+                ModuleInstaller.installZip(context, outFile);
             } catch (Exception e) {
                 e.printStackTrace();
             }
