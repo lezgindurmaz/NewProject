@@ -11,3 +11,4 @@ app/build/
 *.hprof
 *.keystore
 app/keystore.properties
+*.jks
