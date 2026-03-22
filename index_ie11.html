@@ -1,0 +1,206 @@
+<!-- Created By Lezgin - IE11 Compatible Version -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yoki Bank | Dijital Bankacılık</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body {
+            background: #eef2f7;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .bg-pattern {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1;
+            background: #004a99;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 1600 800'%3E%3Cg %3E%3Cpath fill='%2300438a' d='M486 705.8c-109.3-21.8-223.4-32.2-335.3-19.4C99.5 692.1 49 703 0 719.8V800h800v-83.5c-49.4-14.7-99.4-24.8-150-30.3L486 705.8z'/%3E%3Cpath fill='%23003b7b' d='M400 0v431.9c46.7-2.6 93.6-0.5 140.4 6.1l212.8 29.6c50.5 7 101 10.7 151.5 11.1L1104.7 479V0H400z'/%3E%3Cpath fill='%2300336d' d='M1600 0v73.7c-40.7-3.9-81.5-5.5-122.3-5L1264.9 71c-30.3 0.4-60.5 2.1-90.6 4.9L800 112.1V0h800z'/%3E%3Cpath fill='%23002b5e' d='M445 783.3c167.3 13.2 335.6 13.9 503 2.1l179.2-12.6c30.1-2.1 60.3-2 90.4 0.3L1600 800v-44.6l-203.3-25.9c-30.7-3.9-61.5-6.3-92.4-7.1L1010.8 717c-88.3-2.3-176.6 2.1-264.4 13.1L445 783.3z'/%3E%3C/g%3E%3C/svg%3E");
+            background-attachment: fixed; background-size: cover;
+        }
+
+        .app-container {
+            width: 400px; height: 85vh;
+            background: white; border-radius: 24px; overflow: hidden;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4); position: relative;
+            display: flex; flex-direction: column;
+        }
+
+        .welcome-slider {
+            position: absolute; top: 0; left: 0; width: 300%; height: 100%;
+            display: flex; transition: transform 0.6s ease; z-index: 10;
+        }
+        .slide { width: 33.333%; height: 100%; padding: 40px 30px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: white; }
+        .slide h2 { color: #004a99; margin-bottom: 15px; font-size: 26px; }
+        .slide p { color: #666; line-height: 1.6; font-size: 15px; }
+        .arrow-btn {
+            margin-top: 50px; width: 65px; height: 65px; background: #004a99;
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            cursor: pointer; color: white; font-size: 24px;
+            box-shadow: 0 8px 20px rgba(0,74,153,0.4);
+        }
+
+        .login-page { padding: 40px 30px; display: none; height: 100%; flex-direction: column; justify-content: center; }
+
+        .logo { text-align: center; margin-bottom: 50px; }
+        .logo h1 { color: #004a99; font-size: 32px; letter-spacing: -1.5px; font-weight: 800; }
+        .logo p { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
+
+        .input-group { position: relative; margin-bottom: 25px; }
+        .input-group input {
+            width: 100%; padding: 20px 15px 10px; border-radius: 12px;
+            border: 2px solid #e1e5eb; background: #f4f7f6;
+            font-size: 16px; color: #333; font-weight: 500;
+        }
+        .input-group label {
+            position: absolute; top: 18px; left: 15px; font-size: 15px; color: #999;
+            transition: 0.3s ease all; pointer-events: none;
+        }
+        .input-group input:focus ~ label, .input-group input:valid ~ label {
+            top: 6px; font-size: 11px; color: #004a99; font-weight: 600;
+        }
+
+        .btn-login {
+            width: 100%; padding: 18px; background: #004a99; color: white;
+            border: none; border-radius: 12px; font-weight: bold; font-size: 16px;
+            cursor: pointer; margin-top: 15px; position: relative; overflow: hidden;
+        }
+
+        .loader {
+            display: none; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%;
+            border-top: 3px solid white; width: 20px; height: 20px;
+            animation: spin 1s linear infinite; position: absolute; top: 50%; left: 50%;
+            margin-left: -10px; margin-top: -10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .error-page { padding: 30px; display: none; text-align: center; height: 100%; overflow-y: auto; background: #fff; }
+
+        .error-header { background: #ffe6e6; padding: 20px; border-radius: 15px; margin-bottom: 20px; border: 2px solid #ff4d4d; }
+        .error-header h2 { color: #d32f2f; font-size: 22px; margin-bottom: 5px; }
+        .error-header p { color: #555; font-size: 14px; }
+
+        .error-card { background: #fdfdfd; border: 1px solid #eee; border-radius: 12px; padding: 20px; text-align: left; margin-bottom: 20px; }
+        .error-card h3 { color: #333; margin-bottom: 15px; font-size: 16px; border-bottom: 2px solid #eee; padding-bottom: 10px;}
+        .error-card ul { font-size: 13.5px; margin-left: 20px; line-height: 1.6; color: #444; }
+        .error-card li { margin-bottom: 12px; padding-left: 5px; }
+        .error-card li strong { color: #d32f2f; display: block; margin-bottom: 2px; }
+
+        .btn-retry { width: 100%; padding: 16px; background: #333; color: white; border: none; border-radius: 12px; font-weight: bold; font-size: 15px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    <div class="app-container">
+        <div class="welcome-slider" id="slider">
+            <div class="slide">
+                <h2>Hoş Geldiniz</h2>
+                <p>Yoki Bank'ın yenilenen dijital dünyasına adım atın. Daha akıcı, daha güvenli bir deneyim sizi bekliyor.</p>
+                <div class="arrow-btn" onclick="nextSlide(1)">➔</div>
+            </div>
+            <div class="slide">
+                <h2>Tam Kontrol</h2>
+                <p>Harcamalarınızı yönetin, anlık yatırımlarınızı takip edin. Finansal gücünüz tek bir dokunuşla elinizde.</p>
+                <div class="arrow-btn" onclick="nextSlide(2)">➔</div>
+            </div>
+            <div class="slide">
+                <h2>Cihaz İzinleri</h2>
+                <p>Güvenliğiniz ve size özel kampanyalar sunabilmemiz için konum ve bildirim izinlerine ihtiyaç duyuyoruz.</p>
+                <div class="arrow-btn" onclick="requestPermissions()" style="font-size: 16px; font-weight: bold; width: auto; padding: 0 30px; border-radius: 30px;">İzin Ver</div>
+            </div>
+        </div>
+
+        <div class="login-page" id="loginPage">
+            <div class="logo">
+                <h1>YOKI BANK</h1>
+                <p>DİJİTAL ÇÖZÜMLER</p>
+            </div>
+            <form onsubmit="processLogin(event)">
+                <div class="input-group">
+                    <input type="text" id="musteriNo" required>
+                    <label>Müşteri Numarası / T.C. Kimlik</label>
+                </div>
+                <div class="input-group">
+                    <input type="password" id="sifre" required minlength="6" maxlength="6">
+                    <label>6 Haneli Dijital Parola</label>
+                </div>
+                <button type="submit" class="btn-login" id="loginBtn">
+                    <span id="btnText">Güvenli Giriş Yap</span>
+                    <div class="loader" id="btnLoader"></div>
+                </button>
+            </form>
+        </div>
+
+        <div class="error-page" id="errorPage">
+            <div class="error-header">
+                <h2>⚠️ GÜVENLİK İHLALİ!</h2>
+                <p>Az önce sahte bir banka arayüzüne (Phishing) giriş bilgilerinizi teslim ettiniz.</p>
+            </div>
+            <div class="error-card">
+                <h3>Tespit Edilen Kritik Hatalar:</h3>
+                <ul id="errorList">
+                    <li><strong>Resmi Olmayan Uygulama Kaynağı:</strong> Bankalar uygulamalarını doğrudan APK veya bağlantı üzerinden değil, sadece resmi uygulama mağazalarından sunar.</li>
+                    <li><strong>Bağlam Dışı İzin Talebi:</strong> Uygulama, kimlik doğrulaması bile yapmadan önce donanım seviyesinde izinler istedi.</li>
+                    <li id="permResult"></li>
+                    <li><strong>Görsel Yanıltma (Typosquatting):</strong> İsmin "Yoki Bank" gibi uydurma bir isim olmasına dikkat etmediniz.</li>
+                    <li><strong>2FA Eksikliği:</strong> Gerçek banka sistemleri mutlaka 2. bir doğrulama talep eder.</li>
+                </ul>
+            </div>
+            <button class="btn-retry" onclick="location.reload()">Eğitimi Baştan Başlat</button>
+        </div>
+    </div>
+
+    <script>
+        var currentSlide = 0;
+        var permissionGranted = false;
+
+        function nextSlide(index) {
+            currentSlide = index;
+            document.getElementById('slider').style.msTransform = 'translateX(-' + (currentSlide * 33.333) + '%)';
+            document.getElementById('slider').style.transform = 'translateX(-' + (currentSlide * 33.333) + '%)';
+        }
+
+        function requestPermissions() {
+            setTimeout(function() {
+                permissionGranted = confirm("Yoki Bank uygulamasının konumunuza erişmesine ve bildirim göndermesine izin veriyor musunuz?");
+                completeWelcome();
+            }, 300);
+        }
+
+        function completeWelcome() {
+            document.getElementById('slider').style.display = 'none';
+            document.getElementById('loginPage').style.display = 'block';
+        }
+
+        function processLogin(e) {
+            if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
+
+            document.getElementById('btnText').style.opacity = '0';
+            document.getElementById('btnLoader').style.display = 'block';
+            document.getElementById('loginBtn').disabled = true;
+
+            setTimeout(function() {
+                showErrorPage();
+            }, 1500);
+            return false;
+        }
+
+        function showErrorPage() {
+            document.getElementById('loginPage').style.display = 'none';
+            document.getElementById('errorPage').style.display = 'block';
+
+            var permText = permissionGranted ?
+                "Bu sahte uygulamaya cihazınızın verilerine erişim (Konum/Bildirim) yetkisi verdiniz." :
+                "İzin vermeyi reddettiniz ancak maalesef hassas giriş verilerinizi kendi isteğinizle forma girdiniz.";
+
+            document.getElementById('permResult').innerHTML = '<strong>İzin Yönetimi Zafiyeti:</strong> ' + permText;
+        }
+    </script>
+</body>
+</html>
+<!-- LL05 -->
