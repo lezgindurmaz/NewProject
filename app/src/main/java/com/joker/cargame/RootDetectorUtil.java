@@ -1,4 +1,4 @@
-package com.example.rootdetector;
+package com.joker.cargame;
 import android.content.Context;
 import android.os.Build;
 import com.google.android.play.core.integrity.IntegrityManager;
@@ -11,7 +11,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONObject;
-import java.util.Base64;
+import android.util.Base64;
 public class RootDetectorUtil {
     public interface IntegrityCheckCallback {
         void onFinished(CheckResult result);
@@ -49,9 +49,9 @@ public class RootDetectorUtil {
     }
     private static String parseVerdictFromToken(String token) {
         try {
-            String[] parts = token.split("\.");
+            String[] parts = token.split("\\.");
             if (parts.length < 2) return "Invalid Token Structure";
-            byte[] decodedBytes = Base64.getDecoder().decode(parts[1]);
+            byte[] decodedBytes = Base64.decode(parts[1], Base64.DEFAULT);
             String payload = new String(decodedBytes, "UTF-8");
             JSONObject json = new JSONObject(payload);
             JSONObject deviceIntegrity = json.getJSONObject("deviceIntegrity");

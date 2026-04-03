@@ -1,44 +1,112 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    tools:context=".MainActivity">
-    <TextView
-        android:id="@+id/status_textview"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        tools:text="This Environment is Normal" />
-    <ProgressBar
-        android:id="@+id/progress_bar"
-        style="?android:attr/progressBarStyle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+    android:layout_height="match_parent">
+
+    <com.joker.cargame.GameView
+        android:id="@+id/gameView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:id="@+id/prankLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:orientation="vertical"
+        android:gravity="center"
         android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/status_textview" />
-    <ScrollView
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="16dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/progress_bar">
-        <LinearLayout
-            android:id="@+id/results_linearlayout"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/prankTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SİSTEM KRİTİK HATASI"
+            android:textColor="#FF0000"
+            android:textSize="30sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/prankMessage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Cihazınız kalıcı olarak izlenmeye başlandı.\nTüm verileriniz uzak sunucuya aktarılıyor..."
+            android:textColor="#00FF00"
+            android:textSize="18sp"
+            android:fontFamily="monospace"
+            android:gravity="center" />
+
+        <ProgressBar
+            android:id="@+id/prankProgress"
+            style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp" />
-    </ScrollView>
-</androidx.constraintlayout.widget.ConstraintLayout>
+            android:layout_marginTop="30dp"
+            android:progress="0"
+            android:max="100" />
+
+        <TextView
+            android:id="@+id/prankStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Dosyalar şifreleniyor: 0%"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+        <FrameLayout
+            android:id="@+id/cameraContainer"
+            android:layout_width="200dp"
+            android:layout_height="250dp"
+            android:layout_marginTop="20dp"
+            android:visibility="invisible">
+
+            <SurfaceView
+                android:id="@+id/cameraPreview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <TextView
+                android:id="@+id/targetDetected"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="HEDEF TESPİT EDİLDİ"
+                android:textColor="#FF0000"
+                android:background="#66000000"
+                android:gravity="center"
+                android:padding="5dp"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:layout_gravity="bottom" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/scanner_line" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/jumpscareLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/jumpscareText"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:text="HACKED"
+            android:textColor="#FF0000"
+            android:textSize="80sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:fontFamily="monospace" />
+    </FrameLayout>
+
+</FrameLayout>
