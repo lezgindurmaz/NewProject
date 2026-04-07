@@ -3,10 +3,16 @@
 /local.properties
 /.idea/
 .DS_Store
-/build
+build/
+app/build/
+**/build/
+.gradle/
+**/.gradle/
 /captures
 .externalNativeBuild
 .cxx
 *.hprof
 *.keystore
 app/keystore.properties
+*.jks
+node_modules/
